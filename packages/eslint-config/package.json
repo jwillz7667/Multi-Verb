@@ -10,7 +10,12 @@
     "./next": "./next.mjs",
     "./node": "./node.mjs"
   },
-  "files": ["base.mjs", "next.mjs", "node.mjs", "README.md"],
+  "files": [
+    "base.mjs",
+    "next.mjs",
+    "node.mjs",
+    "README.md"
+  ],
   "scripts": {
     "lint": "echo 'eslint-config: no lint (config files only)'",
     "typecheck": "echo 'eslint-config: no typecheck (no .ts files)'",

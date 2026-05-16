@@ -20,13 +20,13 @@ When you add tooling, wire the corresponding `pnpm <script>` / `uv run <cmd>` in
 
 Every design decision must serve these. If a change weakens either, it is wrong regardless of how clean the code looks.
 
-1. **The moderator is biased toward silence.** Default action every tick is `stay_silent`. The moderator must earn every word. Researchers chose this tool over a human moderator *because* they want minimal contamination of group dynamics. The `QuietnessBudget` (§7.4) is the strongest expression of this and is live-adjustable mid-session.
+1. **The moderator is biased toward silence.** Default action every tick is `stay_silent`. The moderator must earn every word. Researchers chose this tool over a human moderator _because_ they want minimal contamination of group dynamics. The `QuietnessBudget` (§7.4) is the strongest expression of this and is live-adjustable mid-session.
 
-2. **Every decision is auditable.** Researchers must answer "why did the moderator say that?" *and* "why didn't it say something here?" in seconds. `stay_silent` decisions are persisted with the same fidelity as spoken ones, and every rule's evaluation is logged every tick whether it fired or not (`rule_evaluations` table). The audit trail is part of the product, not a debugging convenience.
+2. **Every decision is auditable.** Researchers must answer "why did the moderator say that?" _and_ "why didn't it say something here?" in seconds. `stay_silent` decisions are persisted with the same fidelity as spoken ones, and every rule's evaluation is logged every tick whether it fired or not (`rule_evaluations` table). The audit trail is part of the product, not a debugging convenience.
 
 ## The load-bearing architectural commitment
 
-**Separate the decision logic from the language generation.** The rules engine is deterministic, rule-based, fully logged, and chooses *whether* to speak and *to whom*. The LLM ("mouth layer") only phrases what the engine already decided, in one sentence, with no scope to introduce topics or opinions. **The LLM is a mouth, not a brain.**
+**Separate the decision logic from the language generation.** The rules engine is deterministic, rule-based, fully logged, and chooses _whether_ to speak and _to whom_. The LLM ("mouth layer") only phrases what the engine already decided, in one sentence, with no scope to introduce topics or opinions. **The LLM is a mouth, not a brain.**
 
 Code organization must reflect this. The mouth layer (§8) must never see full participant state, rule logic, or which rules fired — only a structured `ModeratorDecision` plus the minimal context needed to phrase it. Crossing this seam is the most likely way to corrode the product.
 
@@ -39,6 +39,7 @@ Two services + shared types, deployed independently:
 - **`verbio-shared`**: shared types for `ParticipantState`, `ModeratorDecision`, `RuleEvaluation`, `ResearcherCommand`. **Pydantic is the source of truth** → JSON Schema → TypeScript via `json-schema-to-typescript`. CI must fail if generated TS is stale. The two services drifting on these shapes is a P0 bug.
 
 Transports:
+
 - **Server-Sent Events from Next.js**, fed by **Redis pub/sub** on `verbio:events:{session_id}`, is how the dashboard observes live state. `EventSource` reconnects with `last-event-id`; the SSE route backfills missed rows from Postgres before resuming. Do not invent a custom WebSocket protocol.
 - **Redis streams** are the command bus from web → engine.
 - **LiveKit Cloud** is the SFU; participants connect there directly.
@@ -48,7 +49,7 @@ Transports:
 
 The engine runs at 2 Hz (500ms tick interval, configurable). Each tick is a pure function of state → decision, plus side effects (§6 of brief). Two invariants are absolute:
 
-1. **Persistence before execution.** A crash mid-tick must never leave a spoken utterance with no decision record. Write the `decisions` row + `rule_evaluations` rows *first*, then call mouth → TTS → publish.
+1. **Persistence before execution.** A crash mid-tick must never leave a spoken utterance with no decision record. Write the `decisions` row + `rule_evaluations` rows _first_, then call mouth → TTS → publish.
 2. **The tick loop never blocks on LLM/TTS.** If they exceed the latency budget, log the decision as `was_executed=false` with `suppressed_by=["latency_exceeded"]` and the next tick proceeds. Latency cannot stall the loop.
 
 **Latency budget:** end-of-rule-trigger to first audible word ≤ 1500ms p95, ≤ 2500ms p99. This is enforced as a synthetic CI perf test starting Phase 4 (§14). Mouth layer streams tokens to TTS as they arrive to hit it.

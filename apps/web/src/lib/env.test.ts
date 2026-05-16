@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseClientEnv, parseServerEnv } from './env.js';
 
-const completeServerEnv = {
+const completeServerEnv: Record<string, string | undefined> = {
   NODE_ENV: 'development',
   NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
   NEXT_PUBLIC_APP_NAME: 'Verbio',
@@ -11,7 +11,7 @@ const completeServerEnv = {
   AUTH_SECRET: 'rand-base64-32-chars-of-noise-here-okx',
   ENGINE_BASE_URL: 'http://localhost:8000',
   ENGINE_ADMIN_TOKEN: 'shared-with-engine-rand-base64',
-} satisfies NodeJS.ProcessEnv;
+};
 
 describe('parseServerEnv', () => {
   it('parses a complete env with defaults applied', () => {

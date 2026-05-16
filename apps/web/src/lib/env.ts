@@ -72,7 +72,9 @@ interface ParseFailure {
   isValid: false;
 }
 
-export function parseServerEnv(input: NodeJS.ProcessEnv): ParseResult<ServerEnv> | ParseFailure {
+export function parseServerEnv(
+  input: Record<string, string | undefined>,
+): ParseResult<ServerEnv> | ParseFailure {
   const result = serverSchema.safeParse(input);
   if (result.success) {
     return { data: result.data, isValid: true };
@@ -80,11 +82,13 @@ export function parseServerEnv(input: NodeJS.ProcessEnv): ParseResult<ServerEnv>
   return { error: result.error, isValid: false };
 }
 
-export function parseClientEnv(input: NodeJS.ProcessEnv): ParseResult<ClientEnv> | ParseFailure {
+export function parseClientEnv(
+  input: Record<string, string | undefined>,
+): ParseResult<ClientEnv> | ParseFailure {
   const projected: Record<string, string | undefined> = {
-    NEXT_PUBLIC_APP_URL: input.NEXT_PUBLIC_APP_URL,
-    NEXT_PUBLIC_APP_NAME: input.NEXT_PUBLIC_APP_NAME,
-    NEXT_PUBLIC_LIVEKIT_URL: input.NEXT_PUBLIC_LIVEKIT_URL,
+    NEXT_PUBLIC_APP_URL: input['NEXT_PUBLIC_APP_URL'],
+    NEXT_PUBLIC_APP_NAME: input['NEXT_PUBLIC_APP_NAME'],
+    NEXT_PUBLIC_LIVEKIT_URL: input['NEXT_PUBLIC_LIVEKIT_URL'],
   };
   const result = clientSchema.safeParse(projected);
   if (result.success) {
@@ -121,5 +125,5 @@ const isServer = typeof window === 'undefined';
 
 export const env: ServerEnv | ClientEnv = isServer ? readServerEnv() : readClientEnv();
 
-export const serverEnv = isServer ? (env as ServerEnv) : null;
-export const clientEnv: ClientEnv = isServer ? (env as ServerEnv) : (env as ClientEnv);
+export const serverEnv: ServerEnv | null = isServer ? (env as ServerEnv) : null;
+export const clientEnv: ClientEnv = env;

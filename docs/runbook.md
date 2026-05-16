@@ -8,15 +8,15 @@
 
 ## 1. Service map
 
-| Service | Where | Logs | Owner |
-|---|---|---|---|
-| `verbio-web` | Vercel | Vercel logs + Sentry | _TBD_ |
-| `verbio-engine` | Railway (Dockerfile) | Railway logs + Sentry | _TBD_ |
-| Postgres | Railway Postgres (managed addon) | Railway dashboard + `pg_stat_statements` | _TBD_ |
-| Redis | Railway Redis (managed addon) | Railway dashboard | _TBD_ |
-| Cloudflare R2 | Cloudflare account | Cloudflare dashboard | _TBD_ |
-| LiveKit Cloud | LiveKit Cloud project | LiveKit dashboard | _TBD_ |
-| Resend (transactional email) | Resend account | Resend dashboard | _TBD_ |
+| Service                      | Where                            | Logs                                     | Owner |
+| ---------------------------- | -------------------------------- | ---------------------------------------- | ----- |
+| `verbio-web`                 | Vercel                           | Vercel logs + Sentry                     | _TBD_ |
+| `verbio-engine`              | Railway (Dockerfile)             | Railway logs + Sentry                    | _TBD_ |
+| Postgres                     | Railway Postgres (managed addon) | Railway dashboard + `pg_stat_statements` | _TBD_ |
+| Redis                        | Railway Redis (managed addon)    | Railway dashboard                        | _TBD_ |
+| Cloudflare R2                | Cloudflare account               | Cloudflare dashboard                     | _TBD_ |
+| LiveKit Cloud                | LiveKit Cloud project            | LiveKit dashboard                        | _TBD_ |
+| Resend (transactional email) | Resend account                   | Resend dashboard                         | _TBD_ |
 
 ---
 

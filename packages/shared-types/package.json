@@ -13,7 +13,9 @@
       "default": "./src/index.ts"
     }
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "generate": "node scripts/generate.mjs",
     "check": "tsc --noEmit",

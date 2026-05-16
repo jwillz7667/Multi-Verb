@@ -42,13 +42,30 @@ export default tseslint.config(
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
 
+  // type-aware rules require parser project info; disable them for plain
+  // .js/.mjs/.cjs files (lint configs, build scripts) that aren't in the
+  // TS project graph.
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    ...tseslint.configs.disableTypeChecked,
+  },
+
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: [
+            '*.config.ts',
+            '*.config.mts',
+            '*.config.cts',
+            'vitest.config.ts',
+            'next.config.ts',
+            'playwright.config.ts',
+          ],
+        },
       },
     },
     plugins: {

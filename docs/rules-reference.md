@@ -136,7 +136,7 @@ When multiple rules fire on the same tick:
 
 ## 4. Quietness budget (hard cap, applies to ALL rules)
 
-A global throughput limiter, the strongest expression of the "bias toward silence" principle. Enforced *after* rule resolution; the resolved decision is suppressed if any of the following are true:
+A global throughput limiter, the strongest expression of the "bias toward silence" principle. Enforced _after_ rule resolution; the resolved decision is suppressed if any of the following are true:
 
 - `current_window_count` ≥ `max_utterances_per_10min` (default **3**)
 - Time since `last_utterance_at` < `min_seconds_between_utterances` (default **30 s**)

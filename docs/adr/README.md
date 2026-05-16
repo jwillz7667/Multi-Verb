@@ -39,9 +39,9 @@ ADRs are immutable once merged to `main`. If a decision is later changed:
 
 ## Index
 
-| # | Title | Status |
-|---|---|---|
-| [0001](./0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
-| [0002](./0002-stack.md) | Stack — Vercel for web, Railway for engine + data, drop Supabase | Accepted |
+| #                                               | Title                                                            | Status   |
+| ----------------------------------------------- | ---------------------------------------------------------------- | -------- |
+| [0001](./0001-record-architecture-decisions.md) | Record architecture decisions                                    | Accepted |
+| [0002](./0002-stack.md)                         | Stack — Vercel for web, Railway for engine + data, drop Supabase | Accepted |
 
 (Update this index whenever you add an ADR.)

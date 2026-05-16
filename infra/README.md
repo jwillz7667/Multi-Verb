@@ -40,6 +40,7 @@ docker compose -f infra/docker-compose.dev.yml up -d
 ```
 
 This brings up:
+
 - **Postgres 16** on `localhost:5432` (direct) — for Alembic and engine async pool.
 - **pgBouncer** on `localhost:6543` (transaction mode) — what Vercel functions hit.
 - **Redis 7** on `localhost:6379` — pub/sub + command bus.
@@ -50,15 +51,15 @@ credentials live in Railway service variables.
 
 ## Production substrate
 
-| Host | What | Why |
-| --- | --- | --- |
-| **Vercel** (`iad1`) | `apps/web` | Edge-deployed Next.js, RSC, ISR, serverless API routes |
-| **Railway** (`us-east1`) | `verbio-engine` + Postgres + Redis | One-process-per-session engine needs durable runtime + private network for DB |
-| **Cloudflare R2** | recordings + exports | S3-compatible, zero egress fees |
-| **LiveKit Cloud** | SFU | Audio rooms; engine joins as participant |
-| **Resend** | transactional email | Auth.js magic links + study invites |
-| **Deepgram** | STT (Phase 2+) | Nova-3 for transcription |
-| **Anthropic** | mouth LLM (Phase 4+) | Claude Haiku for phrasing decisions |
-| **Cartesia** + ElevenLabs | TTS (Phase 4+) | Sonic primary, Flash fallback |
+| Host                      | What                               | Why                                                                           |
+| ------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| **Vercel** (`iad1`)       | `apps/web`                         | Edge-deployed Next.js, RSC, ISR, serverless API routes                        |
+| **Railway** (`us-east1`)  | `verbio-engine` + Postgres + Redis | One-process-per-session engine needs durable runtime + private network for DB |
+| **Cloudflare R2**         | recordings + exports               | S3-compatible, zero egress fees                                               |
+| **LiveKit Cloud**         | SFU                                | Audio rooms; engine joins as participant                                      |
+| **Resend**                | transactional email                | Auth.js magic links + study invites                                           |
+| **Deepgram**              | STT (Phase 2+)                     | Nova-3 for transcription                                                      |
+| **Anthropic**             | mouth LLM (Phase 4+)               | Claude Haiku for phrasing decisions                                           |
+| **Cartesia** + ElevenLabs | TTS (Phase 4+)                     | Sonic primary, Flash fallback                                                 |
 
 The vendor split is documented in `docs/adr/0002-stack.md`.

@@ -12,7 +12,7 @@ Real-time AI moderator for multi-participant qualitative research sessions.
 Verbio joins a voice call with up to 5 participants (plus observing researchers), listens to everyone, and intervenes sparingly to keep the conversation productive — inviting quiet participants in, redirecting topic drift, suggesting turn-taking when cross-talk gets out of hand, and summarizing when useful. Two non-negotiable product properties shape every design decision:
 
 1. **The moderator is biased toward silence.** Default action every tick is `stay_silent`. The moderator must earn every word.
-2. **Every decision is auditable.** Researchers must answer *"why did the moderator say that?"* **and** *"why didn't it say something here?"* in seconds.
+2. **Every decision is auditable.** Researchers must answer _"why did the moderator say that?"_ **and** _"why didn't it say something here?"_ in seconds.
 
 The load-bearing architectural commitment that delivers both: **separate the deterministic, rule-based, fully-logged decision logic from the LLM-driven language generation.** The LLM is a mouth, not a brain.
 
@@ -50,19 +50,19 @@ The repo is a monorepo: **pnpm workspaces + Turborepo** for the TypeScript side,
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Web | Next.js (TypeScript strict, App Router), Auth.js v5, Prisma, React, SSE for live updates; deployed to Vercel |
-| Engine | Python 3.12, LiveKit Agents SDK, FastAPI (health/admin), SQLAlchemy 2.0 async + asyncpg; one process per active session; deployed to Railway (Dockerfile) |
-| Data | Railway Postgres (pgBouncer, nightly backups); Railway Redis (command streams + event pub/sub); Cloudflare R2 (recording + export storage) |
-| Auth + email | Auth.js v5 with Postgres adapter; Resend for transactional + magic-link delivery |
-| AI — STT | Deepgram Nova-3 (streaming, per-track) |
-| AI — Reasoning | Deterministic rules engine, **no LLM in the decision path** |
-| AI — Mouth | Anthropic Claude Haiku (latest); Sonnet upgrade per study |
-| TTS | Cartesia Sonic (primary), ElevenLabs Flash (fallback) |
-| Voice infra | LiveKit Cloud (SFU) |
-| Observability | OpenTelemetry traces, structured JSON logs, Sentry |
-| CI | GitHub Actions |
+| Layer          | Choice                                                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web            | Next.js (TypeScript strict, App Router), Auth.js v5, Prisma, React, SSE for live updates; deployed to Vercel                                              |
+| Engine         | Python 3.12, LiveKit Agents SDK, FastAPI (health/admin), SQLAlchemy 2.0 async + asyncpg; one process per active session; deployed to Railway (Dockerfile) |
+| Data           | Railway Postgres (pgBouncer, nightly backups); Railway Redis (command streams + event pub/sub); Cloudflare R2 (recording + export storage)                |
+| Auth + email   | Auth.js v5 with Postgres adapter; Resend for transactional + magic-link delivery                                                                          |
+| AI — STT       | Deepgram Nova-3 (streaming, per-track)                                                                                                                    |
+| AI — Reasoning | Deterministic rules engine, **no LLM in the decision path**                                                                                               |
+| AI — Mouth     | Anthropic Claude Haiku (latest); Sonnet upgrade per study                                                                                                 |
+| TTS            | Cartesia Sonic (primary), ElevenLabs Flash (fallback)                                                                                                     |
+| Voice infra    | LiveKit Cloud (SFU)                                                                                                                                       |
+| Observability  | OpenTelemetry traces, structured JSON logs, Sentry                                                                                                        |
+| CI             | GitHub Actions                                                                                                                                            |
 
 ---
 

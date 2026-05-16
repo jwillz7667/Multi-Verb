@@ -4,11 +4,11 @@ Shared ESLint flat-config presets for the Verbio monorepo.
 
 ## Presets
 
-| Subpath | Purpose |
-| --- | --- |
+| Subpath                      | Purpose                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `@verbio/eslint-config/base` | Universal TS rules: `typescript-eslint` strict + stylistic type-checked, import ordering, no-floating-promises, no enums. |
-| `@verbio/eslint-config/next` | Overlay for `apps/web`: Next.js 15 core-web-vitals, React, react-hooks, jsx-a11y. |
-| `@verbio/eslint-config/node` | Overlay for Node-only TS packages: Node globals, relaxed `no-console`. |
+| `@verbio/eslint-config/next` | Overlay for `apps/web`: Next.js 15 core-web-vitals, React, react-hooks, jsx-a11y.                                         |
+| `@verbio/eslint-config/node` | Overlay for Node-only TS packages: Node globals, relaxed `no-console`.                                                    |
 
 ## Usage
 

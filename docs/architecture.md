@@ -14,14 +14,14 @@
 Two non-negotiables — every design decision must serve them:
 
 1. **The moderator is biased toward silence.** Default action every tick is `stay_silent`.
-2. **Every decision is auditable.** Researchers must be able to answer *why did the moderator say that?* **and** *why didn't it say something here?* in seconds.
+2. **Every decision is auditable.** Researchers must be able to answer _why did the moderator say that?_ **and** _why didn't it say something here?_ in seconds.
 
 The load-bearing architectural commitment that delivers both:
 
 > **Separate the deterministic, rule-based, fully-logged decision logic from the LLM-driven language generation.**
 > The LLM is a mouth, not a brain.
 
-Crossing that seam is the single most likely way to corrode the product. Reviewers should treat any change that gives the LLM influence over *whether* or *to whom* the moderator speaks as a P0 architectural regression.
+Crossing that seam is the single most likely way to corrode the product. Reviewers should treat any change that gives the LLM influence over _whether_ or _to whom_ the moderator speaks as a P0 architectural regression.
 
 ---
 
@@ -75,11 +75,11 @@ Crossing that seam is the single most likely way to corrode the product. Reviewe
 
 ## 3. Service boundaries
 
-| Service | Owns | Does not own |
-|---|---|---|
-| **`verbio-web`** (Next.js, TypeScript, Vercel) | Dashboard, auth (Auth.js v5 + Resend), session lifecycle endpoints, replay UI/API, exports, study config UI, SSE fan-out from Redis | Real-time decision logic. State derivation. Direct LiveKit room participation. |
-| **`verbio-engine`** (Python 3.12, LiveKit Agents SDK, FastAPI, Railway/Dockerfile) | Tick loop, `SessionState`, rules, decision resolution, LLM/TTS orchestration, LiveKit room participation, transcript ingestion, persistence via SQLAlchemy async | User identity & sessions, multi-org concerns, replay UI, exports. |
-| **`verbio-shared`** (TypeScript + Python via codegen) | Canonical wire shapes: `ParticipantState`, `ModeratorDecision`, `RuleEvaluation`, `ResearcherCommand`. **Pydantic is the source of truth.** | Runtime logic. |
+| Service                                                                            | Owns                                                                                                                                                             | Does not own                                                                   |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **`verbio-web`** (Next.js, TypeScript, Vercel)                                     | Dashboard, auth (Auth.js v5 + Resend), session lifecycle endpoints, replay UI/API, exports, study config UI, SSE fan-out from Redis                              | Real-time decision logic. State derivation. Direct LiveKit room participation. |
+| **`verbio-engine`** (Python 3.12, LiveKit Agents SDK, FastAPI, Railway/Dockerfile) | Tick loop, `SessionState`, rules, decision resolution, LLM/TTS orchestration, LiveKit room participation, transcript ingestion, persistence via SQLAlchemy async | User identity & sessions, multi-org concerns, replay UI, exports.              |
+| **`verbio-shared`** (TypeScript + Python via codegen)                              | Canonical wire shapes: `ParticipantState`, `ModeratorDecision`, `RuleEvaluation`, `ResearcherCommand`. **Pydantic is the source of truth.**                      | Runtime logic.                                                                 |
 
 ### Engine process model
 
@@ -129,7 +129,7 @@ on_tick(t):
 
 ### Two absolute invariants
 
-1. **Persistence before execution.** A crash mid-tick must never leave a spoken utterance with no decision record. Write the `decisions` row + `rule_evaluations` rows *before* invoking mouth → TTS → publish.
+1. **Persistence before execution.** A crash mid-tick must never leave a spoken utterance with no decision record. Write the `decisions` row + `rule_evaluations` rows _before_ invoking mouth → TTS → publish.
 2. **The tick loop never blocks on LLM / TTS.** If they exceed the latency budget, the decision is logged as `was_executed=false` with `suppressed_by=["latency_exceeded"]` and the next tick proceeds. Slow inference cannot stall the loop.
 
 ### Why `stay_silent` is persisted
@@ -142,10 +142,10 @@ The dashboard's **Why quiet now?** panel — the trust feature — depends on th
 
 End-of-rule-trigger → first audible word:
 
-| Metric | Target | Enforcement |
-|---|---|---|
-| p95 | ≤ 1500 ms | Synthetic CI perf test (Phase 4+) |
-| p99 | ≤ 2500 ms | Same |
+| Metric | Target    | Enforcement                       |
+| ------ | --------- | --------------------------------- |
+| p95    | ≤ 1500 ms | Synthetic CI perf test (Phase 4+) |
+| p99    | ≤ 2500 ms | Same                              |
 
 If we miss this budget, the moderator interrupts the next speaker instead of filling silence — which destroys the "bias toward silence" property in practice. The mouth layer streams tokens to TTS as they arrive to hit it. Pre-synthesized fallback phrasings (per persona) cover the LLM-failure path with near-zero added latency.
 
@@ -155,17 +155,17 @@ If we miss this budget, the moderator interrupts the next speaker instead of fil
 
 See brief §10.1 for the canonical schema. Key tables:
 
-| Table | Purpose |
-|---|---|
-| `studies` | Reusable session configurations + persona + rules config |
-| `sessions` | Live / ended session instances + frozen config snapshot |
-| `participants` | Identities present in each session |
-| `utterances` | Transcribed audio segments per participant |
-| `state_snapshots` | Full `SessionState` per tick (2 Hz → 7200 rows/hour) |
-| `decisions` | Every tick's decision, **including `stay_silent`** |
-| `rule_evaluations` | Every rule's evaluation, **fired or not** |
-| `researcher_actions` | Inbound `ResearcherCommand` log |
-| `session_flags` | Researcher-flagged moments + auto-generated flags |
+| Table                | Purpose                                                  |
+| -------------------- | -------------------------------------------------------- |
+| `studies`            | Reusable session configurations + persona + rules config |
+| `sessions`           | Live / ended session instances + frozen config snapshot  |
+| `participants`       | Identities present in each session                       |
+| `utterances`         | Transcribed audio segments per participant               |
+| `state_snapshots`    | Full `SessionState` per tick (2 Hz → 7200 rows/hour)     |
+| `decisions`          | Every tick's decision, **including `stay_silent`**       |
+| `rule_evaluations`   | Every rule's evaluation, **fired or not**                |
+| `researcher_actions` | Inbound `ResearcherCommand` log                          |
+| `session_flags`      | Researcher-flagged moments + auto-generated flags        |
 
 **Tenant isolation via the application-layer `scopedDb(orgId)` helper** — no DB-side RLS. See brief §10.3 and ADR-0002 for the tradeoff rationale. Every web read goes through the helper, which injects `where: { orgId }` and rejects writes that would mutate `org_id`. Direct `prisma.<model>` access is lint-banned. The engine validates inbound command `org_id` against the session's `org_id` before applying. No admin escape hatches — admins use elevated org roles on the same auth path.
 
@@ -175,18 +175,18 @@ State-snapshot retention: full 2 Hz fidelity for 30 days, then downsampled to 1 
 
 ## 7. Communication transports
 
-| Direction | Transport | Why |
-|---|---|---|
-| Browser ↔ Web (auth, REST) | HTTPS | Standard |
-| Browser ↔ Web (live tile updates, decision log) | SSE (`EventSource`) → Next.js route → Redis pub/sub | Read-only fan-out; native browser auto-reconnect; no custom WS server. Vercel function `maxDuration: 300` forces a clean reconnect every 5 min, which the route handles transparently via `last-event-id` + Postgres backfill |
-| Web (Vercel) → Postgres (Railway) | TLS over public internet, via `DATABASE_URL_POOLED` (pgBouncer transaction mode, port 6543) | Required because Vercel serverless can't join Railway's private network; pgBouncer absorbs the per-invocation connection churn |
-| Web (Vercel) → Redis (Railway) | TLS via `rediss://` | Same cross-vendor constraint; used by the SSE route's pub/sub subscription and the researcher-command stream producer |
-| Web → Engine (researcher commands) | Redis stream `verbio:commands:{session_id}` | Durable, ordered, supports consumer groups; engine drains per tick |
-| Engine → Web (decision events) | Redis pub/sub channel `verbio:events:{session_id}` | Low-latency fan-out; SSE bridge backfills missed rows from Postgres on reconnect |
-| Engine ↔ LiveKit | LiveKit SDK (WebRTC) | Required for room participation |
-| Engine ↔ Deepgram | WebSocket (Deepgram streaming) | Lowest-latency STT |
-| Engine ↔ Anthropic | HTTPS (streaming) | Token streaming feeds TTS |
-| Engine ↔ Cartesia/ElevenLabs | HTTPS (streaming PCM) | Audio published as LiveKit track |
+| Direction                                       | Transport                                                                                   | Why                                                                                                                                                                                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser ↔ Web (auth, REST)                      | HTTPS                                                                                       | Standard                                                                                                                                                                                                                      |
+| Browser ↔ Web (live tile updates, decision log) | SSE (`EventSource`) → Next.js route → Redis pub/sub                                         | Read-only fan-out; native browser auto-reconnect; no custom WS server. Vercel function `maxDuration: 300` forces a clean reconnect every 5 min, which the route handles transparently via `last-event-id` + Postgres backfill |
+| Web (Vercel) → Postgres (Railway)               | TLS over public internet, via `DATABASE_URL_POOLED` (pgBouncer transaction mode, port 6543) | Required because Vercel serverless can't join Railway's private network; pgBouncer absorbs the per-invocation connection churn                                                                                                |
+| Web (Vercel) → Redis (Railway)                  | TLS via `rediss://`                                                                         | Same cross-vendor constraint; used by the SSE route's pub/sub subscription and the researcher-command stream producer                                                                                                         |
+| Web → Engine (researcher commands)              | Redis stream `verbio:commands:{session_id}`                                                 | Durable, ordered, supports consumer groups; engine drains per tick                                                                                                                                                            |
+| Engine → Web (decision events)                  | Redis pub/sub channel `verbio:events:{session_id}`                                          | Low-latency fan-out; SSE bridge backfills missed rows from Postgres on reconnect                                                                                                                                              |
+| Engine ↔ LiveKit                                | LiveKit SDK (WebRTC)                                                                        | Required for room participation                                                                                                                                                                                               |
+| Engine ↔ Deepgram                               | WebSocket (Deepgram streaming)                                                              | Lowest-latency STT                                                                                                                                                                                                            |
+| Engine ↔ Anthropic                              | HTTPS (streaming)                                                                           | Token streaming feeds TTS                                                                                                                                                                                                     |
+| Engine ↔ Cartesia/ElevenLabs                    | HTTPS (streaming PCM)                                                                       | Audio published as LiveKit track                                                                                                                                                                                              |
 
 ---
 
@@ -216,16 +216,16 @@ verbio/
 
 ## 9. Quality gates (summary)
 
-| Area | Gate |
-|---|---|
-| TypeScript | strict mode, no `any` without inline justification, `recommended-type-checked` |
-| Python | `ruff check` + `ruff format --check` + `mypy --strict` |
-| Boundaries | Pydantic at every external boundary (HTTP, Redis, env); no `dict`-typed payloads across modules |
-| Tests | ≥ 85% line coverage on `verbio_engine/rules/` and `tick_loop.py`; property tests on state math |
-| Shared types | Generated TS must equal regenerated TS — CI fails otherwise |
-| Migrations | All Postgres schema via Alembic (`infra/postgres/migrations/`), forward-only; web Prisma client regenerated via `prisma db pull`; CI fails on drift |
-| Commits | Conventional Commits, enforced by commitlint |
-| Secrets | env vars only, validated at boot |
+| Area         | Gate                                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript   | strict mode, no `any` without inline justification, `recommended-type-checked`                                                                      |
+| Python       | `ruff check` + `ruff format --check` + `mypy --strict`                                                                                              |
+| Boundaries   | Pydantic at every external boundary (HTTP, Redis, env); no `dict`-typed payloads across modules                                                     |
+| Tests        | ≥ 85% line coverage on `verbio_engine/rules/` and `tick_loop.py`; property tests on state math                                                      |
+| Shared types | Generated TS must equal regenerated TS — CI fails otherwise                                                                                         |
+| Migrations   | All Postgres schema via Alembic (`infra/postgres/migrations/`), forward-only; web Prisma client regenerated via `prisma db pull`; CI fails on drift |
+| Commits      | Conventional Commits, enforced by commitlint                                                                                                        |
+| Secrets      | env vars only, validated at boot                                                                                                                    |
 
 ---
 

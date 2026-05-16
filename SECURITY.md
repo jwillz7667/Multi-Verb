@@ -8,7 +8,7 @@ If you discover a security vulnerability in Verbio, please report it **privately
 
 - **Do not** open a public GitHub issue, discussion, or pull request that describes the vulnerability.
 - **Do not** disclose the vulnerability publicly until Viral Ventures LLC has had a reasonable opportunity to remediate.
-- Email security disclosures to: **`security@viralventures.dev`** *(replace with the real address before production)*
+- Email security disclosures to: **`security@viralventures.dev`** _(replace with the real address before production)_
 
 Include in your report:
 
@@ -99,7 +99,7 @@ If you require a CVE for an unfixed vulnerability you have reported, we will wor
 
 For all security matters:
 
-- **Email:** `security@viralventures.dev` *(replace with real address before launch)*
+- **Email:** `security@viralventures.dev` _(replace with real address before launch)_
 - **Postal:** Viral Ventures LLC, Maple Grove, Minnesota, USA
 
 For non-security inquiries, see [LICENSE](./LICENSE) §15.

@@ -25,13 +25,11 @@ export default function HomePage(): React.ReactElement {
           <span className="text-2xl font-medium tracking-tight">verbio</span>
         </div>
 
-        <h1 className="text-3xl font-medium leading-tight">
-          Phase 0 scaffold ready.
-        </h1>
+        <h1 className="text-3xl font-medium leading-tight">Phase 0 scaffold ready.</h1>
 
         <p className="text-text-secondary leading-relaxed">
-          The dashboard, studies workspace, live moderator control, and replay surfaces will land
-          in subsequent phases. This page exists so the deployment pipeline (Vercel + Railway +
+          The dashboard, studies workspace, live moderator control, and replay surfaces will land in
+          subsequent phases. This page exists so the deployment pipeline (Vercel + Railway +
           Postgres + Redis + R2) has something to render while infrastructure is being wired up.
         </p>
 
@@ -50,8 +48,8 @@ export default function HomePage(): React.ReactElement {
         </div>
 
         <p className="text-text-tertiary mt-4 text-xs">
-          Phase 0 of the engineering brief. The visual system here mirrors the handoff design
-          tokens (IBM Plex Sans, light + dark themes via <code className="font-mono">data-theme</code>).
+          Phase 0 of the engineering brief. The visual system here mirrors the handoff design tokens
+          (IBM Plex Sans, light + dark themes via <code className="font-mono">data-theme</code>).
         </p>
       </div>
     </main>

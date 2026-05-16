@@ -8,7 +8,7 @@ describe('cn', () => {
   });
 
   it('drops falsy values', () => {
-    expect(cn('px-2', null, undefined, false && 'hidden')).toBe('px-2');
+    expect(cn('px-2', null, undefined, false)).toBe('px-2');
   });
 
   it('honors conditional object form', () => {

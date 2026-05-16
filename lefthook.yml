@@ -14,8 +14,8 @@ pre-commit:
 
     eslint:
       glob: "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-      exclude: '(generated|\.config\.)'
-      run: pnpm eslint --max-warnings=0 {staged_files}
+      exclude: '(generated|next-env\.d\.ts$)'
+      run: pnpm eslint --no-warn-ignored --max-warnings=0 {staged_files}
 
     ruff-check:
       glob: "services/engine/**/*.py"

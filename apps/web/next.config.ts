@@ -4,9 +4,7 @@ const config: NextConfig = {
   output: 'standalone',
   reactStrictMode: true,
   poweredByHeader: false,
-  experimental: {
-    typedRoutes: true,
-  },
+  typedRoutes: true,
   transpilePackages: ['@verbio/shared-types', '@verbio/ui'],
   eslint: {
     ignoreDuringBuilds: true,

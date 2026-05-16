@@ -26,7 +26,7 @@ infra/r2/
 ## Bucket conventions
 
 - One bucket per Vercel environment: `verbio-recordings-{preview,
-  staging,production}`. The bucket name is supplied via `R2_BUCKET`
+staging,production}`. The bucket name is supplied via `R2_BUCKET`
   in each environment's settings.
 - Object keys:
   - `recordings/{session_id}/mixed.mp4`
@@ -40,12 +40,12 @@ infra/r2/
 Cloudflare R2 CLI: `wrangler r2 bucket lifecycle put <bucket-name>
 --config infra/r2/lifecycle.json`):
 
-| Rule | Prefix | Action |
-| --- | --- | --- |
-| `expire-incomplete-multipart-uploads` | (all) | Abort multipart uploads stale > 7 days |
-| `transition-recordings-to-cold-storage` | `recordings/` | Move to Infrequent Access after 30 days |
-| `expire-recordings-after-retention-window` | `recordings/` | Delete after 730 days (2 years) |
-| `expire-exports-after-90-days` | `exports/` | Delete after 90 days |
+| Rule                                       | Prefix        | Action                                  |
+| ------------------------------------------ | ------------- | --------------------------------------- |
+| `expire-incomplete-multipart-uploads`      | (all)         | Abort multipart uploads stale > 7 days  |
+| `transition-recordings-to-cold-storage`    | `recordings/` | Move to Infrequent Access after 30 days |
+| `expire-recordings-after-retention-window` | `recordings/` | Delete after 730 days (2 years)         |
+| `expire-exports-after-90-days`             | `exports/`    | Delete after 90 days                    |
 
 The 2-year recording retention reflects the typical IRB / research
 ethics commitment in the customer's own data agreements. Tighten or

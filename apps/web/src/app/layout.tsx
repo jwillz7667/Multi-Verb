@@ -1,5 +1,6 @@
-import type { Metadata, Viewport } from 'next';
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
+
+import type { Metadata, Viewport } from 'next';
 
 import './globals.css';
 
@@ -25,7 +26,7 @@ export const metadata: Metadata = {
   description:
     'Verbio is a real-time AI moderator for multi-participant qualitative research sessions.',
   applicationName: 'Verbio',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
+  metadataBase: new URL(process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'),
   robots: { index: false, follow: false },
 };
 
@@ -38,7 +39,11 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }): React.ReactElement {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactElement {
   return (
     <html lang="en" data-theme="light" className={`${plexSans.variable} ${plexMono.variable}`}>
       <body>{children}</body>

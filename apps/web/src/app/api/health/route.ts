@@ -9,7 +9,7 @@
 
 import { NextResponse } from 'next/server';
 
-import { SERVICE_NAME, SERVICE_VERSION } from '@/lib/service-info.js';
+import { SERVICE_NAME, SERVICE_VERSION } from '@/lib/service-info';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,7 +27,7 @@ export function GET(): NextResponse<HealthResponse> {
     status: 'ok',
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
-    environment: process.env.NODE_ENV ?? 'development',
+    environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
   };
   return NextResponse.json(body);

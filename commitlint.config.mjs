@@ -16,7 +16,19 @@ export default {
     'type-enum': [
       2,
       'always',
-      ['feat', 'fix', 'refactor', 'perf', 'test', 'docs', 'chore', 'build', 'ci', 'revert', 'style'],
+      [
+        'feat',
+        'fix',
+        'refactor',
+        'perf',
+        'test',
+        'docs',
+        'chore',
+        'build',
+        'ci',
+        'revert',
+        'style',
+      ],
     ],
     'scope-enum': [
       2,

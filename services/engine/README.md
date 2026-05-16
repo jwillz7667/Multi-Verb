@@ -41,22 +41,22 @@ in step.
 
 ## Common commands
 
-| Task                            | Command                                                |
-| ------------------------------- | ------------------------------------------------------ |
-| Run dev server (hot reload)     | `uv run verbio-engine`                                 |
-| Run dev server (explicit)       | `uv run uvicorn verbio_engine.main:app --reload`       |
-| Lint                            | `uv run ruff check .`                                  |
-| Format                          | `uv run ruff format .`                                 |
-| Format (check only)             | `uv run ruff format --check .`                         |
-| Typecheck (strict)              | `uv run mypy --strict verbio_engine`                   |
-| Tests                           | `uv run pytest`                                        |
-| Tests (with coverage)           | `uv run pytest --cov=verbio_engine --cov-report=term-missing` |
-| Single test                     | `uv run pytest tests/domain/test_models.py::test_participant_state_minimal_construction` |
-| Export JSON Schemas             | `uv run verbio-export-schemas`                         |
-| Check JSON Schemas are in sync  | `uv run verbio-export-schemas --check`                 |
-| Apply DB migrations             | `DATABASE_URL_DIRECT=… uv run alembic upgrade head`    |
-| Show current revision           | `DATABASE_URL_DIRECT=… uv run alembic current`         |
-| Build container                 | `docker build -t verbio-engine .`                      |
+| Task                           | Command                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Run dev server (hot reload)    | `uv run verbio-engine`                                                                   |
+| Run dev server (explicit)      | `uv run uvicorn verbio_engine.main:app --reload`                                         |
+| Lint                           | `uv run ruff check .`                                                                    |
+| Format                         | `uv run ruff format .`                                                                   |
+| Format (check only)            | `uv run ruff format --check .`                                                           |
+| Typecheck (strict)             | `uv run mypy --strict verbio_engine`                                                     |
+| Tests                          | `uv run pytest`                                                                          |
+| Tests (with coverage)          | `uv run pytest --cov=verbio_engine --cov-report=term-missing`                            |
+| Single test                    | `uv run pytest tests/domain/test_models.py::test_participant_state_minimal_construction` |
+| Export JSON Schemas            | `uv run verbio-export-schemas`                                                           |
+| Check JSON Schemas are in sync | `uv run verbio-export-schemas --check`                                                   |
+| Apply DB migrations            | `DATABASE_URL_DIRECT=… uv run alembic upgrade head`                                      |
+| Show current revision          | `DATABASE_URL_DIRECT=… uv run alembic current`                                           |
+| Build container                | `docker build -t verbio-engine .`                                                        |
 
 ## How shared types stay in sync
 

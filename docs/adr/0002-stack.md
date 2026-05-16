@@ -12,7 +12,7 @@ The original brief proposed a Supabase + Vercel topology: Supabase Postgres with
 1. **Drop Supabase entirely.** Replace it with primitives we control end-to-end: Railway-managed Postgres + Redis, Cloudflare R2 for blob storage, and Auth.js v5 + Resend for authentication. Tenant isolation moves from RLS to an application-layer `scopedDb(orgId)` helper.
 2. **Specialize hosting per workload.** Vercel hosts the Next.js web app; Railway hosts the Python engine, the managed Postgres, and the managed Redis. Each vendor is best-in-class for its half of the workload, and the cross-vendor traffic between them is bounded and pooled.
 
-Both changes happen *before* any code lands, so the cost is purely documentation churn — the right time to make them.
+Both changes happen _before_ any code lands, so the cost is purely documentation churn — the right time to make them.
 
 ### Forces
 
@@ -26,20 +26,20 @@ Both changes happen *before* any code lands, so the cost is purely documentation
 
 Adopt the following stack for all environments (dev, preview, staging, production):
 
-| Capability | Choice | Notes |
-|---|---|---|
-| Web compute | **Vercel** | Next.js 15 (App Router); GitHub integration drives preview deploys per PR; production region `iad1` |
-| Engine compute | **Railway (Dockerfile)** | Python 3.12; one process per active session via thin supervisor; region `us-east1` to co-locate with Vercel `iad1` |
-| Relational DB | **Railway Postgres (managed)** | pgBouncer, nightly backups; one logical database, two roles (`postgres` migrations, `verbio_engine` runtime grants); web reaches it via `DATABASE_URL_POOLED` (port 6543, transaction mode) over public TLS; engine reaches it via the Railway private network |
-| Cache + bus | **Railway Redis (managed)** | Command streams (`verbio:commands:{session_id}`) + event pub/sub (`verbio:events:{session_id}`); web reaches it via `rediss://` over public TLS; engine reaches it via the Railway private network |
-| Schema migrations | **Alembic** in `infra/postgres/migrations/`, driven from `services/engine` | Source of truth; CI applies via `alembic upgrade head` |
-| Engine ORM | **SQLAlchemy 2.0 async + asyncpg + Pydantic** | Strict typed models at every boundary |
-| Web ORM | **Prisma**, introspected via `prisma db pull` against the Alembic schema | Web never authors schema; CI fails on drift |
-| Auth | **Auth.js v5** with the Postgres adapter | HS256 sessions signed with `AUTH_SECRET`, 15-min access / 30-day refresh; rotated quarterly |
-| Transactional email | **Resend** | Magic-link delivery; verified sender on the production domain |
-| Recording + export storage | **Cloudflare R2** | AES-256 at rest; signed URLs (15-min recordings, 60-min exports); lifecycle policies in `infra/r2/` |
-| Browser realtime | **SSE** from a Next.js route subscribed to Redis pub/sub | Route declares `maxDuration: 300` (Vercel Pro ceiling); `EventSource` reconnects with `last-event-id`; SSE route backfills missed rows from Postgres before resuming the live tail |
-| Tenant isolation | **Application-layer `scopedDb(orgId)` helper** + lint rule banning direct Prisma access + engine command `org_id` validation | See §10.3 of the brief; replaces Supabase RLS |
+| Capability                 | Choice                                                                                                                       | Notes                                                                                                                                                                                                                                                          |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web compute                | **Vercel**                                                                                                                   | Next.js 15 (App Router); GitHub integration drives preview deploys per PR; production region `iad1`                                                                                                                                                            |
+| Engine compute             | **Railway (Dockerfile)**                                                                                                     | Python 3.12; one process per active session via thin supervisor; region `us-east1` to co-locate with Vercel `iad1`                                                                                                                                             |
+| Relational DB              | **Railway Postgres (managed)**                                                                                               | pgBouncer, nightly backups; one logical database, two roles (`postgres` migrations, `verbio_engine` runtime grants); web reaches it via `DATABASE_URL_POOLED` (port 6543, transaction mode) over public TLS; engine reaches it via the Railway private network |
+| Cache + bus                | **Railway Redis (managed)**                                                                                                  | Command streams (`verbio:commands:{session_id}`) + event pub/sub (`verbio:events:{session_id}`); web reaches it via `rediss://` over public TLS; engine reaches it via the Railway private network                                                             |
+| Schema migrations          | **Alembic** in `infra/postgres/migrations/`, driven from `services/engine`                                                   | Source of truth; CI applies via `alembic upgrade head`                                                                                                                                                                                                         |
+| Engine ORM                 | **SQLAlchemy 2.0 async + asyncpg + Pydantic**                                                                                | Strict typed models at every boundary                                                                                                                                                                                                                          |
+| Web ORM                    | **Prisma**, introspected via `prisma db pull` against the Alembic schema                                                     | Web never authors schema; CI fails on drift                                                                                                                                                                                                                    |
+| Auth                       | **Auth.js v5** with the Postgres adapter                                                                                     | HS256 sessions signed with `AUTH_SECRET`, 15-min access / 30-day refresh; rotated quarterly                                                                                                                                                                    |
+| Transactional email        | **Resend**                                                                                                                   | Magic-link delivery; verified sender on the production domain                                                                                                                                                                                                  |
+| Recording + export storage | **Cloudflare R2**                                                                                                            | AES-256 at rest; signed URLs (15-min recordings, 60-min exports); lifecycle policies in `infra/r2/`                                                                                                                                                            |
+| Browser realtime           | **SSE** from a Next.js route subscribed to Redis pub/sub                                                                     | Route declares `maxDuration: 300` (Vercel Pro ceiling); `EventSource` reconnects with `last-event-id`; SSE route backfills missed rows from Postgres before resuming the live tail                                                                             |
+| Tenant isolation           | **Application-layer `scopedDb(orgId)` helper** + lint rule banning direct Prisma access + engine command `org_id` validation | See §10.3 of the brief; replaces Supabase RLS                                                                                                                                                                                                                  |
 
 LiveKit Cloud, Deepgram, Anthropic, Cartesia, and ElevenLabs are unchanged.
 
@@ -83,7 +83,7 @@ LiveKit Cloud, Deepgram, Anthropic, Cartesia, and ElevenLabs are unchanged.
 **New risks:**
 
 - A bug in `scopedDb` is a cross-tenant data leak. Mitigation: dedicated unit + integration tests; lint enforcement; ESLint rule fails CI; quarterly tenant-scoping audit (added to `docs/runbook.md` §2 and `verbio-engineering-brief.md` §14 Phase 7).
-- Postgres connection storms from cold-started Vercel functions. Mitigation: web *only* uses `DATABASE_URL_POOLED` (pgBouncer transaction mode); set Prisma `connection_limit=1` per serverless invocation; alert on pgBouncer pool saturation.
+- Postgres connection storms from cold-started Vercel functions. Mitigation: web _only_ uses `DATABASE_URL_POOLED` (pgBouncer transaction mode); set Prisma `connection_limit=1` per serverless invocation; alert on pgBouncer pool saturation.
 - Railway and Vercel are both smaller than AWS. Mitigation: keep Postgres backups exported to R2 nightly (independent of Railway); Dockerfile-based engine deploy is portable to any container host; Next.js + Prisma + Auth.js are all open and portable to any Node host; Auth.js + Alembic are DB-vendor-neutral.
 
 **Implied follow-up:**

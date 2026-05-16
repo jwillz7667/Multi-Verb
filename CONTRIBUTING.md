@@ -6,7 +6,7 @@ Verbio is proprietary software owned by Viral Ventures LLC. **External contribut
 
 ## 1. Read the brief first
 
-[`verbio-engineering-brief.md`](./verbio-engineering-brief.md) is the canonical specification. Every change must be consistent with it. If the brief is wrong or incomplete for a real situation, propose a brief revision *first*, in a separate PR, before writing code that contradicts the brief.
+[`verbio-engineering-brief.md`](./verbio-engineering-brief.md) is the canonical specification. Every change must be consistent with it. If the brief is wrong or incomplete for a real situation, propose a brief revision _first_, in a separate PR, before writing code that contradicts the brief.
 
 If you are not sure whether a change fits the spec, **stop and ask** — flexibility in the early phases is cheap, drift from the spec is expensive.
 
@@ -36,21 +36,21 @@ Branch from `main`, rebase before merging. Squash merges only — keep `main` li
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), enforced by commitlint:
 
-| Type | Use for |
-|---|---|
-| `feat:` | New functionality |
-| `fix:` | Bug fix |
+| Type        | Use for                             |
+| ----------- | ----------------------------------- |
+| `feat:`     | New functionality                   |
+| `fix:`      | Bug fix                             |
 | `refactor:` | Restructure with no behavior change |
-| `perf:` | Performance improvement |
-| `test:` | Adding/updating tests |
-| `docs:` | Documentation only |
-| `chore:` | Tooling, dependencies, infra |
-| `build:` | Build system changes |
-| `ci:` | CI configuration changes |
+| `perf:`     | Performance improvement             |
+| `test:`     | Adding/updating tests               |
+| `docs:`     | Documentation only                  |
+| `chore:`    | Tooling, dependencies, infra        |
+| `build:`    | Build system changes                |
+| `ci:`       | CI configuration changes            |
 
 Scope is optional but encouraged: `feat(rules): add silence_gap rule`.
 
-**One logical change per commit.** Refactors and behavior changes never share a commit. Imperative subject, ≤ 72 chars. Body explains *why*, not *what*.
+**One logical change per commit.** Refactors and behavior changes never share a commit. Imperative subject, ≤ 72 chars. Body explains _why_, not _what_.
 
 ---
 

@@ -3,11 +3,11 @@
 Railway hosts the three services that need a long-lived process or a
 private network:
 
-| Service | Type | Role |
-| --- | --- | --- |
-| `verbio-engine` | Docker (this repo) | FastAPI + LiveKit Agents process — 2 Hz tick loop, rules engine, mouth/TTS orchestration |
-| `verbio-postgres` | Railway Postgres plugin | Single source of truth for sessions, decisions, rule_evaluations, audit trail |
-| `verbio-redis` | Railway Redis plugin | SSE pub/sub channel + researcher command bus + ephemeral state |
+| Service           | Type                    | Role                                                                                     |
+| ----------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| `verbio-engine`   | Docker (this repo)      | FastAPI + LiveKit Agents process — 2 Hz tick loop, rules engine, mouth/TTS orchestration |
+| `verbio-postgres` | Railway Postgres plugin | Single source of truth for sessions, decisions, rule_evaluations, audit trail            |
+| `verbio-redis`    | Railway Redis plugin    | SSE pub/sub channel + researcher command bus + ephemeral state                           |
 
 The web tier lives on Vercel, not Railway — see ADR-0002 for the
 rationale (Next.js performance + edge runtime, vs. Railway's

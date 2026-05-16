@@ -38,7 +38,12 @@ packages/shared-types/src/generated/
 
 # Documentation that should remain verbatim
 verbio-engineering-brief.md
+verbio-ui-prompt.md
 LICENSE
+
+# Design handoff bundle (vendor content from Claude Design — committed
+# as reference only; do not reformat or restyle)
+MultiVerb-handoff/
 
 # Alembic-generated SQL migrations should not be rewrapped
 infra/postgres/migrations/versions/*.py

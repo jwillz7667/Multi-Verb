@@ -7,16 +7,8 @@
     "package.json",
     "pnpm-workspace.yaml"
   ],
-  "globalEnv": [
-    "NODE_ENV",
-    "CI",
-    "TURBO_TELEMETRY_DISABLED"
-  ],
-  "globalPassThroughEnv": [
-    "PATH",
-    "HOME",
-    "SHELL"
-  ],
+  "globalEnv": ["NODE_ENV", "CI", "TURBO_TELEMETRY_DISABLED"],
+  "globalPassThroughEnv": ["PATH", "HOME", "SHELL"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -28,11 +20,7 @@
         "out/**",
         "src/generated/**"
       ],
-      "env": [
-        "NEXT_PUBLIC_*",
-        "SENTRY_*",
-        "OTEL_*"
-      ]
+      "env": ["NEXT_PUBLIC_*", "SENTRY_*", "OTEL_*"]
     },
     "dev": {
       "cache": false,

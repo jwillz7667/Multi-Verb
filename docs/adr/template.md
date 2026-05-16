@@ -9,7 +9,7 @@
 
 What is the situation that forced this decision? What constraints, requirements,
 or prior commitments shape it? Keep this short — enough that a future reader
-understands *why this was up for debate*, not the entire system.
+understands _why this was up for debate_, not the entire system.
 
 ## Decision
 

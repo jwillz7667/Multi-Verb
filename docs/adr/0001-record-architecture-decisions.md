@@ -9,9 +9,10 @@
 
 Verbio is a system with strong product principles (bias toward silence,
 full auditability) and a deliberate two-language architecture (Python engine
-+ TypeScript web). Several non-obvious tradeoffs are already baked into the
-brief: per-session engine processes, Pydantic-as-source-of-truth, persistence
-before execution, etc.
+
+- TypeScript web). Several non-obvious tradeoffs are already baked into the
+  brief: per-session engine processes, Pydantic-as-source-of-truth, persistence
+  before execution, etc.
 
 As the team grows and the codebase matures, decisions of this weight will
 keep accumulating. Without a lightweight record:
