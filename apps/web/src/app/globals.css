@@ -1,0 +1,155 @@
+/**
+ * Tailwind CSS 4 — Verbio design tokens.
+ *
+ * Source of truth: MultiVerb-handoff/multiverb/project/styles.css.
+ * Tokens here are mirrored into the Tailwind theme via @theme so
+ * utilities like `bg-surface-secondary` or `text-tertiary` resolve
+ * to the same CSS variables the handoff prototype uses. Theme
+ * switching is data-attribute driven: `<html data-theme="dark">`
+ * flips every variable below.
+ */
+
+@import 'tailwindcss';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  --color-surface-primary: var(--bg-primary);
+  --color-surface-secondary: var(--bg-secondary);
+  --color-surface-tertiary: var(--bg-tertiary);
+  --color-surface-elevated: var(--bg-elevated);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-on-accent: var(--text-on-accent);
+
+  --color-border-default: var(--border-default);
+  --color-border-emphasis: var(--border-emphasis);
+  --color-border-strong: var(--border-strong);
+
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
+
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+
+  --color-accent: var(--accent-purple);
+  --color-accent-bg: var(--accent-purple-bg);
+  --color-accent-border: var(--accent-purple-border);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  --font-sans: var(--font-plex-sans), -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  /* light theme (default) — values mirror MultiVerb-handoff styles.css :root */
+  --bg-primary: #ffffff;
+  --bg-secondary: #fafaf7;
+  --bg-tertiary: #f4f3ee;
+  --bg-elevated: #ffffff;
+
+  --text-primary: #1a1a19;
+  --text-secondary: #5f5e5a;
+  --text-tertiary: #888780;
+  --text-on-accent: #ffffff;
+
+  --border-default: rgb(0 0 0 / 8%);
+  --border-emphasis: rgb(0 0 0 / 15%);
+  --border-strong: rgb(0 0 0 / 22%);
+
+  --info: #5b7fa8;
+  --info-bg: rgb(91 127 168 / 10%);
+  --info-border: rgb(91 127 168 / 28%);
+
+  --warning: #a88350;
+  --warning-bg: rgb(168 131 80 / 10%);
+  --warning-border: rgb(168 131 80 / 28%);
+
+  --danger: #9e5757;
+  --danger-bg: rgb(158 87 87 / 10%);
+  --danger-border: rgb(158 87 87 / 28%);
+
+  --success: #6b8a56;
+  --success-bg: rgb(107 138 86 / 10%);
+  --success-border: rgb(107 138 86 / 28%);
+
+  --accent-purple: #7b72a8;
+  --accent-purple-bg: rgb(123 114 168 / 10%);
+  --accent-purple-border: rgb(123 114 168 / 28%);
+}
+
+[data-theme='dark'] {
+  --bg-primary: #16161a;
+  --bg-secondary: #1b1b1f;
+  --bg-tertiary: #222226;
+  --bg-elevated: #1f1f23;
+
+  --text-primary: #ecece9;
+  --text-secondary: #a6a39c;
+  --text-tertiary: #6f6d68;
+
+  --border-default: rgb(255 255 255 / 8%);
+  --border-emphasis: rgb(255 255 255 / 14%);
+  --border-strong: rgb(255 255 255 / 22%);
+
+  --info: #7ca0cc;
+  --info-bg: rgb(124 160 204 / 14%);
+  --info-border: rgb(124 160 204 / 30%);
+
+  --warning: #c9a06b;
+  --warning-bg: rgb(201 160 107 / 14%);
+  --warning-border: rgb(201 160 107 / 30%);
+
+  --danger: #c07878;
+  --danger-bg: rgb(192 120 120 / 14%);
+  --danger-border: rgb(192 120 120 / 30%);
+
+  --success: #8faf74;
+  --success-bg: rgb(143 175 116 / 14%);
+  --success-border: rgb(143 175 116 / 30%);
+
+  --accent-purple: #9d94cc;
+  --accent-purple-bg: rgb(157 148 204 / 14%);
+  --accent-purple-border: rgb(157 148 204 / 30%);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-feature-settings:
+    'ss01',
+    'cv01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

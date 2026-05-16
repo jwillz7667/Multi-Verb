@@ -1,0 +1,46 @@
+{
+  "name": "@verbio/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Verbio dashboard — Next.js 15 App Router on Vercel.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "next lint --max-warnings=0 && eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "clean": "rimraf .next .turbo node_modules/.cache coverage"
+  },
+  "dependencies": {
+    "@verbio/shared-types": "workspace:*",
+    "@verbio/ui": "workspace:*",
+    "next": "^15.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@verbio/eslint-config": "workspace:*",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.4",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.5.1",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
