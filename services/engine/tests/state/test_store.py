@@ -690,3 +690,97 @@ def test_projected_participant_state_is_a_real_participant_state() -> None:
     p = snap.participants["p1"]
     assert isinstance(p, ParticipantState)
     assert isinstance(p.flags, ParticipantFlags)
+
+
+# ---------------------------------------------------------------------------
+# Embedding integration (Phase 3 L6)
+# ---------------------------------------------------------------------------
+
+
+def test_default_snapshot_has_no_study_prompt_or_embeddings() -> None:
+    store = _store()
+    snap = store.advance_to(_start())
+    assert snap.study_prompt == ""
+    assert snap.study_prompt_embedding is None
+    assert snap.rolling_transcript_30s_embedding is None
+    assert snap.embedding_model_name is None
+
+
+def test_set_study_prompt_threads_through_to_snapshot() -> None:
+    store = _store()
+    store.set_study_prompt(
+        "What features matter most in a music app?",
+        [0.1, 0.2, 0.3],
+        model_name="text-embedding-3-small",
+    )
+    snap = store.advance_to(_start())
+    assert snap.study_prompt == "What features matter most in a music app?"
+    assert snap.study_prompt_embedding == [0.1, 0.2, 0.3]
+    assert snap.embedding_model_name == "text-embedding-3-small"
+
+
+def test_set_study_prompt_copies_embedding_list() -> None:
+    # Mutating the source after the fact must not affect the stored copy.
+    store = _store()
+    vec = [0.1, 0.2, 0.3]
+    store.set_study_prompt("hello", vec, model_name="m")
+    vec[0] = 99.0
+    snap = store.advance_to(_start())
+    assert snap.study_prompt_embedding == [0.1, 0.2, 0.3]
+
+
+def test_set_rolling_transcript_embedding_threads_through() -> None:
+    store = _store()
+    store.set_rolling_transcript_embedding(
+        [0.4, 0.5, 0.6],
+        model_name="text-embedding-3-small",
+    )
+    snap = store.advance_to(_start())
+    assert snap.rolling_transcript_30s_embedding == [0.4, 0.5, 0.6]
+    assert snap.embedding_model_name == "text-embedding-3-small"
+
+
+def test_set_rolling_transcript_embedding_none_clears_cache() -> None:
+    # Coordinator passes None on provider failure → rule sees no embedding.
+    store = _store()
+    store.set_rolling_transcript_embedding([0.1, 0.2], model_name="m")
+    snap1 = store.advance_to(_start())
+    assert snap1.rolling_transcript_30s_embedding == [0.1, 0.2]
+
+    store.set_rolling_transcript_embedding(None, model_name="m")
+    snap2 = store.advance_to(_start() + timedelta(milliseconds=500))
+    assert snap2.rolling_transcript_30s_embedding is None
+
+
+def test_embedding_model_name_set_by_first_call_persists() -> None:
+    # Study prompt call sets the model name; subsequent transcript calls
+    # don't churn it — the field is intended to be model-stable per session.
+    store = _store()
+    store.set_study_prompt("x", [1.0], model_name="text-embedding-3-small")
+    store.set_rolling_transcript_embedding([2.0], model_name="text-embedding-3-small")
+    snap = store.advance_to(_start())
+    assert snap.embedding_model_name == "text-embedding-3-small"
+
+
+def test_embeddings_persist_across_ticks() -> None:
+    store = _store()
+    store.set_study_prompt("x", [1.0, 0.0], model_name="m")
+    store.set_rolling_transcript_embedding([0.0, 1.0], model_name="m")
+
+    snap1 = store.advance_to(_start())
+    snap2 = store.advance_to(_start() + timedelta(seconds=1))
+
+    # Both ticks see the same embeddings — they're cached.
+    assert snap1.study_prompt_embedding == snap2.study_prompt_embedding
+    assert snap1.rolling_transcript_30s_embedding == snap2.rolling_transcript_30s_embedding
+
+
+def test_setting_study_prompt_again_replaces_previous() -> None:
+    # Reload-mid-session is rare but legal (re-snapshot with new prompt).
+    store = _store()
+    store.set_study_prompt("first", [1.0], model_name="m")
+    store.set_study_prompt("second", [2.0], model_name="m2")
+    snap = store.advance_to(_start())
+    assert snap.study_prompt == "second"
+    assert snap.study_prompt_embedding == [2.0]
+    assert snap.embedding_model_name == "m2"

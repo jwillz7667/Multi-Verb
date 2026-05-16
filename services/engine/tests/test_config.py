@@ -81,3 +81,29 @@ def test_livekit_overrides_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.livekit_api_secret.get_secret_value() == "secretxxxx"
     assert s.moderator_identity == "verbio-agent-stage"
     assert s.moderator_display_name == "Verbio (staging)"
+
+
+def test_openai_embedding_defaults_match_brief(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The developer's local env often has OPENAI_API_KEY set; strip it
+    # so the test reads the actual default rather than an injected value.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    s = load_settings()
+    # No key in dev — embedding-dependent rules degrade to "no signal".
+    assert s.openai_api_key is None
+    assert s.openai_embedding_model == "text-embedding-3-small"
+    assert s.openai_base_url is None
+
+
+def test_openai_overrides_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-xxxxx")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
+
+    s = load_settings()
+
+    assert isinstance(s.openai_api_key, SecretStr)
+    assert s.openai_api_key.get_secret_value() == "sk-test-xxxxx"
+    assert s.openai_embedding_model == "text-embedding-3-large"
+    assert s.openai_base_url == "https://proxy.example/v1"

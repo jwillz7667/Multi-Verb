@@ -66,6 +66,27 @@ class Settings(BaseSettings):
     deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
     deepgram_language: str = Field(default="en-US", alias="DEEPGRAM_LANGUAGE")
 
+    # ----- OpenAI embeddings (Phase 3: topic_drift rule) --------------------
+    # Optional at process boot so non-agent roles (admin server, schema
+    # export, tests without networked deps) can still start. The session
+    # bootstrapper asserts presence before the engine joins a room that
+    # has topic_drift enabled. `text-embedding-3-small` is the cheapest
+    # 1536-dim option and matches the brief's default.
+    openai_api_key: SecretStr | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="OPENAI_EMBEDDING_MODEL",
+    )
+    openai_base_url: str | None = Field(
+        default=None,
+        alias="OPENAI_BASE_URL",
+        description=(
+            "Override only for tests or for a proxied OpenAI-compatible "
+            "endpoint. DeepSeek (mouth layer, Phase 4) uses its own "
+            "DEEPSEEK_BASE_URL, not this."
+        ),
+    )
+
     # ----- Service name (for observability) --------------------------------
     service_name: str = Field(default="verbio-engine", alias="OTEL_SERVICE_NAME_ENGINE")
 

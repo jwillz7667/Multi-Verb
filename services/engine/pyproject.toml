@@ -33,6 +33,11 @@ dependencies = [
   "livekit-agents>=1.5.9,<2",
   "livekit-plugins-deepgram>=1.5.9,<2",
   "livekit-plugins-silero>=1.5.9,<2",
+  # OpenAI SDK powers two things: the embedding provider for topic_drift
+  # (text-embedding-3-small by default) and, via base_url override, the
+  # DeepSeek-compatible mouth-layer client landing in Phase 4. Constraint
+  # matches livekit-agents' upper-bound (>=2 since 1.5.9).
+  "openai>=2.0.0,<3",
 ]
 
 [project.optional-dependencies]

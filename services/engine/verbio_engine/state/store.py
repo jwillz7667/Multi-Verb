@@ -169,6 +169,18 @@ class StateStore:
         self._is_paused: bool = False
         self._moderator_muted: bool = False
 
+        # Embedding cache (Phase 3 layer 6). The store stays sync at
+        # `advance_to` time; an upstream coordinator (tick loop / runtime)
+        # calls the async EmbeddingProvider and feeds results back here
+        # via `set_study_prompt_embedding` / `set_rolling_transcript_embedding`.
+        # Until those are called, the embedding fields project as None
+        # and topic_drift's "missing embedding" branch keeps the moderator
+        # silent.
+        self._study_prompt: str = ""
+        self._study_prompt_embedding: list[float] | None = None
+        self._rolling_transcript_30s_embedding: list[float] | None = None
+        self._embedding_model_name: str | None = None
+
         # Tick counter: each successful `advance_to` increments. The
         # first projected snapshot has `tick_id=0`.
         self._next_tick_id: int = 0
@@ -208,6 +220,51 @@ class StateStore:
     def update_quietness_budget(self, budget: QuietnessBudget) -> None:
         """Replace the current budget snapshot (researcher slider, Phase 5)."""
         self._quietness_budget = budget
+
+    def set_study_prompt(
+        self,
+        prompt: str,
+        embedding: list[float],
+        *,
+        model_name: str,
+    ) -> None:
+        """Set the study prompt + its embedding for `topic_drift` (Phase 3 L6).
+
+        Called once per session at startup, after the upstream coordinator
+        has invoked the EmbeddingProvider. The vector is treated as opaque
+        — the store does not validate dimensionality here because the
+        rule predicate compares it against the transcript embedding, which
+        is also produced by the same provider; cross-model mismatches are
+        the coordinator's responsibility to prevent.
+        """
+        self._study_prompt = prompt
+        self._study_prompt_embedding = list(embedding)
+        self._embedding_model_name = model_name
+
+    def set_rolling_transcript_embedding(
+        self,
+        embedding: list[float] | None,
+        *,
+        model_name: str,
+    ) -> None:
+        """Update the cached 30s-transcript embedding for `topic_drift`.
+
+        Coordinator calls this after each UtteranceFinalEvent (or on a
+        debounced schedule) once the async embed round-trip completes.
+        Passing `None` clears the cache — used on provider failure so the
+        rule sees "no embedding" and stays silent rather than acting on
+        stale data.
+
+        `model_name` must match what was passed to `set_study_prompt`;
+        if it doesn't, we still store it (the projection writes it onto
+        the snapshot) so a downstream invariant check can catch the drift.
+        """
+        self._rolling_transcript_30s_embedding = list(embedding) if embedding is not None else None
+        # Don't overwrite a populated model_name with the same value;
+        # but if the study_prompt was never set this is the first signal
+        # we've seen and we record it for the snapshot.
+        if self._embedding_model_name is None:
+            self._embedding_model_name = model_name
 
     def advance_to(self, t: datetime) -> SessionState:
         """Fold pending events with `ts <= t` and project a fresh snapshot."""
@@ -504,6 +561,10 @@ class StateStore:
             is_paused=self._is_paused,
             moderator_muted=self._moderator_muted,
             quietness_budget=self._quietness_budget,
+            study_prompt=self._study_prompt,
+            study_prompt_embedding=self._study_prompt_embedding,
+            rolling_transcript_30s_embedding=self._rolling_transcript_30s_embedding,
+            embedding_model_name=self._embedding_model_name,
         )
 
     def _compute_flags(
