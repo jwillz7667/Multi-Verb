@@ -41,7 +41,7 @@ Adopt the following stack for all environments (dev, preview, staging, productio
 | Browser realtime           | **SSE** from a Next.js route subscribed to Redis pub/sub                                                                     | Route declares `maxDuration: 300` (Vercel Pro ceiling); `EventSource` reconnects with `last-event-id`; SSE route backfills missed rows from Postgres before resuming the live tail                                                                             |
 | Tenant isolation           | **Application-layer `scopedDb(orgId)` helper** + lint rule banning direct Prisma access + engine command `org_id` validation | See §10.3 of the brief; replaces Supabase RLS                                                                                                                                                                                                                  |
 
-LiveKit Cloud, Deepgram, Anthropic, Cartesia, and ElevenLabs are unchanged.
+LiveKit Cloud, Deepgram, DeepSeek (mouth LLM, swapped from Anthropic), Cartesia, and ElevenLabs are unchanged.
 
 ## Alternatives considered
 

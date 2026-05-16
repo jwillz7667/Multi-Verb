@@ -40,7 +40,7 @@ We aim to:
 - Third-party services we depend on:
   - LiveKit Cloud → [LiveKit security](https://livekit.io/security)
   - Deepgram → [Deepgram security](https://deepgram.com/security)
-  - Anthropic → [Anthropic responsible disclosure](https://www.anthropic.com/security)
+  - DeepSeek → email `security@deepseek.com` (see <https://www.deepseek.com> privacy/security policy)
   - Cartesia → vendor disclosure channel
   - ElevenLabs → vendor disclosure channel
   - Vercel → [Vercel security](https://vercel.com/security)

@@ -36,7 +36,7 @@
         "RESEND_API_KEY",
         "R2_*",
         "LIVEKIT_*",
-        "ANTHROPIC_*",
+        "DEEPSEEK_*",
         "DEEPGRAM_*",
         "CARTESIA_*",
         "ELEVENLABS_*",

@@ -31,8 +31,8 @@ updates:
         patterns: ["vitest", "@vitest/*", "playwright", "@playwright/*"]
       tooling:
         patterns: ["turbo", "lefthook", "rimraf"]
-      anthropic:
-        patterns: ["@anthropic-ai/*"]
+      openai-deepseek:
+        patterns: ["openai"]
       prisma:
         patterns: ["prisma", "@prisma/*"]
       auth:
@@ -70,8 +70,8 @@ updates:
         patterns: ["sqlalchemy*", "asyncpg", "alembic"]
       livekit:
         patterns: ["livekit*"]
-      anthropic:
-        patterns: ["anthropic"]
+      openai-deepseek:
+        patterns: ["openai"]
       observability:
         patterns: ["opentelemetry-*", "sentry-sdk", "structlog"]
 

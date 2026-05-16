@@ -8,7 +8,7 @@ license = { text = "Proprietary — Viral Ventures LLC" }
 authors = [{ name = "Viral Ventures LLC", email = "engineering@viralventures.dev" }]
 keywords = ["livekit", "qualitative-research", "moderator", "fastapi"]
 
-# Runtime dependencies. LiveKit Agents, Deepgram, Anthropic, Cartesia,
+# Runtime dependencies. LiveKit Agents, Deepgram, DeepSeek (via openai SDK), Cartesia,
 # ElevenLabs are added in the phase that first uses them (see brief §14).
 #
 # Alembic + SQLAlchemy land in Phase 0 (the `_health` migration). Phase 1

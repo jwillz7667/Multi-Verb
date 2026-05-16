@@ -38,7 +38,7 @@ numReplicas = 1
 #   - LIVEKIT_API_SECRET    — from LiveKit Cloud
 #   - LIVEKIT_URL           — wss://your-instance.livekit.cloud
 #   - DEEPGRAM_API_KEY      — STT (Phase 2+)
-#   - ANTHROPIC_API_KEY     — mouth LLM (Phase 4+)
+#   - DEEPSEEK_API_KEY      — mouth LLM (Phase 4+; OpenAI-compatible API at https://api.deepseek.com)
 #   - CARTESIA_API_KEY      — TTS (Phase 4+)
 
 [environments.production.deploy]

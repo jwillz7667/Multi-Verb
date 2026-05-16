@@ -58,7 +58,7 @@ The repo is a monorepo: **pnpm workspaces + Turborepo** for the TypeScript side,
 | Auth + email   | Auth.js v5 with Postgres adapter; Resend for transactional + magic-link delivery                                                                          |
 | AI — STT       | Deepgram Nova-3 (streaming, per-track)                                                                                                                    |
 | AI — Reasoning | Deterministic rules engine, **no LLM in the decision path**                                                                                               |
-| AI — Mouth     | Anthropic Claude Haiku (latest); Sonnet upgrade per study                                                                                                 |
+| AI — Mouth     | DeepSeek `deepseek-chat` via OpenAI-compatible API (`https://api.deepseek.com`); `deepseek-reasoner` upgrade per study                                    |
 | TTS            | Cartesia Sonic (primary), ElevenLabs Flash (fallback)                                                                                                     |
 | Voice infra    | LiveKit Cloud (SFU)                                                                                                                                       |
 | Observability  | OpenTelemetry traces, structured JSON logs, Sentry                                                                                                        |

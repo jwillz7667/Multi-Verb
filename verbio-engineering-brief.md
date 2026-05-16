@@ -385,9 +385,10 @@ The LLM receives a structured decision and produces one sentence. It never sees:
 
 ### 8.3 Model choice
 
-- **Default:** Claude Haiku (latest available) via direct API. Fast, cheap, and sufficient for one-sentence outputs.
-- **Configurable per study:** allow upgrading to Sonnet for studies where phrasing matters more than latency.
+- **Default:** DeepSeek `deepseek-chat` via the OpenAI-compatible API at `https://api.deepseek.com`. Cheap (~$0.27/M input, $1.10/M output) and sufficient for one-sentence outputs.
+- **Configurable per study:** allow upgrading to `deepseek-reasoner` for studies where the moderator's reasoning quality matters more than latency (note: R1 emits thinking tokens; expect higher time-to-first-token).
 - **Streaming:** stream tokens to TTS as they arrive for lowest latency to first audible word.
+- **Latency caveat:** DeepSeek typically has higher and more variable time-to-first-token than tier-1 hosted models. The §8.4 templated-fallback path will trigger more often than with a low-latency provider — that's acceptable (fallback is real product, not a panic exit) and stays well inside the §6 1500 ms p95 / 2500 ms p99 end-to-end budget.
 
 ### 8.4 Failure modes
 
@@ -729,7 +730,7 @@ Each phase produces a working, demoable artifact. No phase ships without its qua
 
 **Goal:** end-to-end automated moderator.
 
-- Mouth layer: Anthropic client, prompt builder per action type, streaming token handling.
+- Mouth layer: DeepSeek client (via OpenAI-compatible SDK pointed at `https://api.deepseek.com`), prompt builder per action type, streaming token handling.
 - TTS: Cartesia integration, voice library curation, audio publishing to LiveKit.
 - Templated fallback phrasings per action type, pre-synthesized per persona, cached.
 - Latency instrumentation: trace from rule fire → spoken_at, with the p95/p99 budget enforced as a CI perf test (synthetic).

@@ -73,18 +73,20 @@ Open the decision row. Trace:
 - `reason_codes` — what predicate inputs triggered it?
 - Inspect `llm_prompt` and `llm_output` — was the phrasing the issue?
 
-### 3.4 LLM provider outage (Anthropic)
+### 3.4 LLM provider outage (DeepSeek)
 
 > _Populated during Phase 4._
 
 Expected fallback behavior:
 
-- Mouth layer's 800 ms wall-clock timeout triggers.
+- Mouth layer's `DEEPSEEK_TIMEOUT_MS` wall-clock timeout triggers (1200 ms default — wider than the tier-1-hosted budget the brief originally assumed).
 - Templated phrasing per `action` type is substituted from the per-persona cache.
 - Decision row records `llm_fallback=true`.
 - No intervention is ever silently skipped — fallback over nothing.
 
 If templated audio cache is missing for a persona, log error and emit pre-synthesized generic-voice phrasing. Backfill cache offline.
+
+DeepSeek availability has historically been less consistent than tier-1 providers. If failures cluster (more than ~20 % fallback rate sustained across a session), check `https://status.deepseek.com` and consider flipping the per-study `DEEPSEEK_MODEL_DEFAULT` to a static cached phrasing for the remainder of the session via a researcher action.
 
 ### 3.5 TTS provider outage (Cartesia → ElevenLabs fallback)
 

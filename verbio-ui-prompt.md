@@ -483,7 +483,7 @@ Visually distinct from Live (no red indicator, slightly cooler background tint `
 - "Join session" button → goes to a "waiting for moderator to start" screen with a calming animation
 
 **Settings (`/settings`):**
-- Tabs: Profile, Organization, Integrations (LiveKit, Deepgram, Anthropic, Cartesia keys — masked), Billing (placeholder), API keys
+- Tabs: Profile, Organization, Integrations (LiveKit, Deepgram, DeepSeek, Cartesia keys — masked), Billing (placeholder), API keys
 - Standard form patterns
 
 ---

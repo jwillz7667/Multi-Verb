@@ -59,7 +59,7 @@ credentials live in Railway service variables.
 | **LiveKit Cloud**         | SFU                                | Audio rooms; engine joins as participant                                      |
 | **Resend**                | transactional email                | Auth.js magic links + study invites                                           |
 | **Deepgram**              | STT (Phase 2+)                     | Nova-3 for transcription                                                      |
-| **Anthropic**             | mouth LLM (Phase 4+)               | Claude Haiku for phrasing decisions                                           |
+| **DeepSeek**              | mouth LLM (Phase 4+)               | `deepseek-chat` for phrasing; OpenAI-compatible API at api.deepseek.com       |
 | **Cartesia** + ElevenLabs | TTS (Phase 4+)                     | Sonic primary, Flash fallback                                                 |
 
 The vendor split is documented in `docs/adr/0002-stack.md`.

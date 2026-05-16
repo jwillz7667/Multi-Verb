@@ -86,7 +86,7 @@ The user's global `~/.claude/CLAUDE.md` defaults to Node/Fastify/Prisma for back
 - Auth is **Auth.js v5** with the Postgres adapter + **Resend** magic-link, not Supabase Auth.
 - Recording storage is **Cloudflare R2** (S3-compatible), not Supabase Storage.
 - Browser realtime is **SSE backed by Redis pub/sub** in the Next.js route layer, not Supabase Realtime.
-- Mouth LLM default is **Claude Haiku** (latest available) via Anthropic API, upgradeable to Sonnet per study. Not OpenAI.
+- Mouth LLM default is **DeepSeek `deepseek-chat`** via the OpenAI-compatible endpoint at `https://api.deepseek.com`, upgradeable to `deepseek-reasoner` per study. Not Anthropic, not OpenAI hosted models. Use the `openai` Python SDK with `base_url="https://api.deepseek.com"`.
 - STT is **Deepgram** (matches global default).
 - TTS default is **Cartesia Sonic**, fallback **ElevenLabs Flash**.
 
