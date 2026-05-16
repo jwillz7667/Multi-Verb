@@ -39,7 +39,9 @@ try {
     stdio: 'inherit',
   });
 } catch (err) {
-  fail(`failed to run verbio-export-schemas — is uv installed and the engine project synced? (${err.message})`);
+  fail(
+    `failed to run verbio-export-schemas — is uv installed and the engine project synced? (${err.message})`,
+  );
 }
 
 if (!existsSync(schemasDir)) {
@@ -97,20 +99,22 @@ for (const file of schemaFiles) {
   const ts = await compile(schema, schema.title, compileOptions);
   const outPath = join(outDir, `${kebab}.ts`);
   writeFileSync(outPath, ts, 'utf-8');
-  indexExports.push(`export type * from './${kebab}.js';`);
+  // Only re-export the top-level model name. The auxiliary type aliases
+  // (DecisionId, SessionId, ...) collide across schemas, so keep them
+  // file-local; consumers deep-import if they really need one.
+  indexExports.push(`export type { ${schema.title} } from './${kebab}.js';`);
   log(`wrote ${relative(repoRoot, outPath)}`);
 }
 
-const indexContents =
-  [
-    '/**',
-    ' * AUTO-GENERATED barrel — re-exports every generated domain type.',
-    ' * See sibling files (one per Pydantic model).',
-    ' */',
-    '',
-    ...indexExports,
-    '',
-  ].join('\n');
+const indexContents = [
+  '/**',
+  ' * AUTO-GENERATED barrel — re-exports every generated domain type.',
+  ' * See sibling files (one per Pydantic model).',
+  ' */',
+  '',
+  ...indexExports,
+  '',
+].join('\n');
 
 writeFileSync(join(outDir, 'index.ts'), indexContents, 'utf-8');
 log(`wrote ${relative(repoRoot, join(outDir, 'index.ts'))}`);
