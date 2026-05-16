@@ -2,7 +2,7 @@
 # Verbio engine — Python 3.12 on a slim base. Built by uv for reproducibility.
 # Targets Railway; works locally with `docker build -t verbio-engine .`.
 
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.14-slim-bookworm AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
