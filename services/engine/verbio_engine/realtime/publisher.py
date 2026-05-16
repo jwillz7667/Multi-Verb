@@ -28,6 +28,7 @@ from redis import asyncio as redis_async
 
 from verbio_engine.logging import get_logger
 from verbio_engine.realtime.events import (
+    DecisionEventEnvelope,
     StateSnapshotEventEnvelope,
     UtteranceEventEnvelope,
     channel_for,
@@ -40,7 +41,7 @@ log = get_logger(__name__)
 # directly (not the `TranscriptEvent` discriminated alias) so the
 # publisher API remains a normal nominal type that mypy can narrow on
 # attribute access without unwrapping the `Annotated[...]` wrapper.
-_PublishableEvent = UtteranceEventEnvelope | StateSnapshotEventEnvelope
+_PublishableEvent = UtteranceEventEnvelope | StateSnapshotEventEnvelope | DecisionEventEnvelope
 
 
 @runtime_checkable

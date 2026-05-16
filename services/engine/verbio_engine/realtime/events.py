@@ -8,9 +8,7 @@ discriminator across variants.
 Variants today:
   - `utterance`      (Phase 1): one STT segment
   - `state_snapshot` (Phase 2 L3): full SessionState frozen at one tick
-
-Variants planned:
-  - `decision`       (Phase 3): rule-driven moderator decision
+  - `decision`       (Phase 3 L10): rule-driven moderator decision
 
 `TranscriptEvent` is a discriminated union built from the per-variant
 envelope classes; consumers should construct via the typed envelope
@@ -33,6 +31,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, TypeAdapter
 
+from verbio_engine.domain.decision import ModeratorDecision
 from verbio_engine.domain.session_state import SessionState
 
 
@@ -139,23 +138,66 @@ class StateSnapshotEventEnvelope(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Decision variant (Phase 3 L10)
+# ---------------------------------------------------------------------------
+
+
+class DecisionEventPayload(BaseModel):
+    """Snapshot of one moderator decision at the moment it was persisted.
+
+    Carries the full `ModeratorDecision` plus the DB row id (`decision_id`
+    matches `decisions.id`). The dashboard's decision log + "Why quiet
+    now?" panel render from this payload alone — no second trip to
+    Postgres for the common case.
+
+    In shadow mode (Phase 3) `was_executed` is always False and the
+    mouth-layer fields (`llm_prompt`, `llm_output`, `tts_audio_url`,
+    `spoken_at`) are all None. The envelope ships anyway so the
+    dashboard can show the silent-decision stream while researchers
+    review.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    decision: ModeratorDecision
+
+
+class DecisionEventEnvelope(BaseModel):
+    """SSE envelope for one per-tick moderator decision.
+
+    `id` mirrors the `decisions.id` UUID as a string so the web SSE
+    route's Last-Event-ID backfill maps it straight to the row. `ts`
+    is the tick wall-clock (`decision.timestamp`) so the client can
+    order across reconnects without unwrapping the payload.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["decision"]
+    id: str = Field(min_length=1)
+    session_id: uuid.UUID
+    ts: datetime
+    payload: DecisionEventPayload
+
+
+# ---------------------------------------------------------------------------
 # Union + validation entry-point
 # ---------------------------------------------------------------------------
 
 
 TranscriptEvent = Annotated[
-    UtteranceEventEnvelope | StateSnapshotEventEnvelope,
+    UtteranceEventEnvelope | StateSnapshotEventEnvelope | DecisionEventEnvelope,
     Field(discriminator="type"),
 ]
 """Discriminated union over every per-session SSE envelope variant.
 
-Phase 3 will append a `decision` variant; the discriminator pattern
+Phase 3 L10 adds the `decision` variant; the discriminator pattern
 keeps that change additive on the web side."""
 
 
-TranscriptEventAdapter: TypeAdapter[UtteranceEventEnvelope | StateSnapshotEventEnvelope] = (
-    TypeAdapter(TranscriptEvent)
-)
+TranscriptEventAdapter: TypeAdapter[
+    UtteranceEventEnvelope | StateSnapshotEventEnvelope | DecisionEventEnvelope
+] = TypeAdapter(TranscriptEvent)
 """Single entry-point for validation, JSON Schema export, and bulk dump.
 
 Use this rather than per-class `model_validate` when parsing inbound
@@ -207,6 +249,22 @@ def utterance_event(
     )
 
 
+def decision_event(*, decision: ModeratorDecision) -> DecisionEventEnvelope:
+    """Build a `DecisionEventEnvelope` for a freshly-persisted decision.
+
+    `decision.decision_id` is the same UUID the resolver minted up front
+    and the L9 repo persisted, so the envelope `id` is `str(decision_id)`
+    and the SSE backfill resolves it directly to `decisions.id`.
+    """
+    return DecisionEventEnvelope(
+        type="decision",
+        id=str(decision.decision_id),
+        session_id=decision.session_id,
+        ts=decision.timestamp,
+        payload=DecisionEventPayload(decision=decision),
+    )
+
+
 def state_snapshot_event(
     *,
     snapshot_id: uuid.UUID,
@@ -234,6 +292,8 @@ def state_snapshot_event(
 # annotate tick counters can pull it from here without a second import
 # (keeps the public surface coherent).
 __all__ = [
+    "DecisionEventEnvelope",
+    "DecisionEventPayload",
     "NonNegativeInt",
     "StateSnapshotEventEnvelope",
     "StateSnapshotEventPayload",
@@ -242,6 +302,7 @@ __all__ = [
     "UtteranceEventEnvelope",
     "UtteranceEventPayload",
     "channel_for",
+    "decision_event",
     "state_snapshot_event",
     "utterance_event",
 ]

@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from verbio_engine.decisions import DecisionTickListener
 from verbio_engine.embeddings import EmbeddingCoordinator
 from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
@@ -51,13 +52,15 @@ from verbio_engine.state.events import (
 from verbio_engine.tick_loop import Clock, TickLoop, WallClock
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Callable, Coroutine
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from verbio_engine.domain.session_state import SessionState
     from verbio_engine.embeddings import EmbeddingProvider
     from verbio_engine.persistence import Participant, Session, UtteranceInsert
+    from verbio_engine.rules import RulesRegistry
     from verbio_engine.state.events import StateEvent
 
 log = get_logger(__name__)
@@ -139,10 +142,16 @@ class SessionRuntime:
         publisher: EventPublisher | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         embedding_rolling_window_sec: float = 30.0,
+        rules_registry: RulesRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
         self._session_id: uuid.UUID | None = None
+        # Phase 3 L10: when a registry is wired in the tick listener
+        # runs the resolver and persists a decisions/rule_evaluations
+        # batch each tick. Worker code injects the v1 registry; tests
+        # leave it None when they're not exercising the decisions path.
+        self._rules_registry: RulesRegistry | None = rules_registry
         # Optional embedding pipeline (Phase 3 L7). When `provider` is
         # None the runtime simply doesn't embed anything — topic_drift
         # will read `None` for both vectors and stay silent. The
@@ -193,6 +202,32 @@ class SessionRuntime:
 
     def participant_id_for(self, identity: str) -> uuid.UUID | None:
         """Sync lookup: identity → DB participant_id, or None if not yet joined."""
+        return self._participant_ids.get(identity)
+
+    def _identity_to_db_uuid(self, identity: str) -> uuid.UUID | None:
+        """Resolve a rule-emitted participant id → DB `participants.id` UUID.
+
+        Used by `DecisionTickListener` to translate the string carried on
+        `ModeratorDecision.target_participant_id` into a typed UUID. The
+        rules engine receives whatever the state store puts into
+        `state.participants` keys — today the runtime keys those by the
+        stringified DB UUID, but a future refactor may switch to LiveKit
+        identities. We accept either form for resilience:
+
+          * Parses as UUID + matches a known participant → return typed.
+          * Else look up as a LiveKit identity in the in-memory cache.
+
+        Either path returning `None` means the runtime can't vouch for
+        the id (purge race or rule emitted something unknown); the
+        listener then writes `target_participant_id=NULL` and the audit
+        trail keeps the moderator's intent without the FK link.
+        """
+        try:
+            as_uuid = uuid.UUID(identity)
+        except ValueError:
+            as_uuid = None
+        if as_uuid is not None and as_uuid in self._snapshot_by_pid:
+            return as_uuid
         return self._participant_ids.get(identity)
 
     async def await_participant_id(
@@ -373,10 +408,19 @@ class SessionRuntime:
             scheduled_end_at=scheduled_end_at,
             config=state_config,
         )
-        listener = PersistAndPublishListener(
+        snapshot_listener = PersistAndPublishListener(
             session_factory=self._session_factory,
             publisher=self._publisher,
         )
+        decision_listener: DecisionTickListener | None = None
+        if self._rules_registry is not None:
+            decision_listener = DecisionTickListener(
+                session_factory=self._session_factory,
+                publisher=self._publisher,
+                rules=self._rules_registry,
+                identity_resolver=self._identity_to_db_uuid,
+            )
+        listener = _compose_tick_listeners(snapshot_listener, decision_listener)
         self._tick_loop = TickLoop(
             store=self._state_store,
             clock=clock or WallClock(),
@@ -506,3 +550,31 @@ class SessionRuntime:
             if row is None:
                 return
             await sess_repo.mark_ended(row)
+
+
+def _compose_tick_listeners(
+    snapshot_listener: PersistAndPublishListener,
+    decision_listener: DecisionTickListener | None,
+) -> Callable[[SessionState], Coroutine[object, object, None]]:
+    """Build the single `SnapshotListener` the tick loop drives.
+
+    Always runs the snapshot listener (state_snapshots row + SSE
+    envelope). When a `DecisionTickListener` is wired, runs it
+    afterwards in the same tick.
+
+    Sequential execution is deliberate. The snapshot row is the
+    upstream input to the decision audit log (researchers reading the
+    log expect the matching snapshot to be queryable), so on a
+    snapshot-persist failure we deliberately skip the decision write
+    too — better to drop a whole tick consistently than to leave a
+    decision dangling against a missing snapshot row. The tick loop's
+    own try/except already counts the failure into `listener_failures`.
+    """
+    if decision_listener is None:
+        return snapshot_listener.__call__
+
+    async def composite(state: SessionState) -> None:
+        await snapshot_listener(state)
+        await decision_listener(state)
+
+    return composite
