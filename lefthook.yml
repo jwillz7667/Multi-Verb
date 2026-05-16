@@ -17,13 +17,18 @@ pre-commit:
       exclude: '(generated|next-env\.d\.ts$)'
       run: pnpm eslint --no-warn-ignored --max-warnings=0 {staged_files}
 
+    # `root` makes lefthook chdir into services/engine and strip that
+    # prefix from {staged_files}, so the paths handed to ruff are
+    # relative to the engine package (not the monorepo root).
     ruff-check:
-      glob: "services/engine/**/*.py"
-      run: cd services/engine && uv run ruff check {staged_files}
+      root: "services/engine/"
+      glob: "*.py"
+      run: uv run ruff check {staged_files}
 
     ruff-format:
-      glob: "services/engine/**/*.py"
-      run: cd services/engine && uv run ruff format --check {staged_files}
+      root: "services/engine/"
+      glob: "*.py"
+      run: uv run ruff format --check {staged_files}
 
     mypy-engine:
       # Run on any engine py change. Strict mode is enforced by config.
