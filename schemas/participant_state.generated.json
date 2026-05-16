@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "ParticipantFlags": {
+      "additionalProperties": false,
+      "description": "Derived booleans recomputed each tick from rolling state.\n\nPredicates are documented in `docs/rules-reference.md`. Each rule's\npredicate may consume one or more of these flags.",
+      "properties": {
+        "disengaged": {
+          "default": false,
+          "description": "No backchannels and no speech in the recent window.",
+          "title": "Disengaged",
+          "type": "boolean"
+        },
+        "dominating": {
+          "default": false,
+          "description": "Actual share of last 5 min exceeds fair share by configured factor.",
+          "title": "Dominating",
+          "type": "boolean"
+        },
+        "frequently_interrupted": {
+          "default": false,
+          "description": "`was_interrupted_count` exceeds threshold over the rolling window.",
+          "title": "Frequently Interrupted",
+          "type": "boolean"
+        },
+        "silent_too_long": {
+          "default": false,
+          "description": "Has not spoken in N minutes (configured per study).",
+          "title": "Silent Too Long",
+          "type": "boolean"
+        }
+      },
+      "title": "ParticipantFlags",
+      "type": "object"
+    },
+    "UtteranceRef": {
+      "additionalProperties": false,
+      "description": "A pointer to a recent utterance with the timing metadata the rules need.",
+      "properties": {
+        "duration_sec": {
+          "description": "Length of the utterance in seconds.",
+          "minimum": 0,
+          "title": "Duration Sec",
+          "type": "number"
+        },
+        "spoken_at": {
+          "description": "Wall-clock start time of the utterance.",
+          "format": "date-time",
+          "title": "Spoken At",
+          "type": "string"
+        },
+        "text": {
+          "description": "Verbatim transcribed text (may be partial).",
+          "title": "Text",
+          "type": "string"
+        },
+        "utterance_id": {
+          "description": "Stable id; references utterances.utterance_id.",
+          "title": "Utterance Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "utterance_id",
+        "text",
+        "spoken_at",
+        "duration_sec"
+      ],
+      "title": "UtteranceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Per-participant snapshot consumed by every rule on every tick.",
+  "properties": {
+    "actual_share_last_5min_pct": {
+      "default": 0.0,
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Actual Share Last 5Min Pct",
+      "type": "number"
+    },
+    "backchannel_count_last_2min": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Backchannel Count Last 2Min",
+      "type": "integer"
+    },
+    "display_name": {
+      "description": "Human-readable label shown to researchers.",
+      "title": "Display Name",
+      "type": "string"
+    },
+    "fair_share_pct": {
+      "default": 0.0,
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Fair Share Pct",
+      "type": "number"
+    },
+    "flags": {
+      "$ref": "#/$defs/ParticipantFlags"
+    },
+    "interruption_count": {
+      "default": 0,
+      "description": "Times this participant cut someone else off.",
+      "minimum": 0,
+      "title": "Interruption Count",
+      "type": "integer"
+    },
+    "is_currently_speaking": {
+      "default": false,
+      "title": "Is Currently Speaking",
+      "type": "boolean"
+    },
+    "joined_at": {
+      "format": "date-time",
+      "title": "Joined At",
+      "type": "string"
+    },
+    "last_spoke_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Spoke At"
+    },
+    "last_spoke_duration_sec": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Spoke Duration Sec"
+    },
+    "participant_id": {
+      "description": "Stable application id.",
+      "title": "Participant Id",
+      "type": "string"
+    },
+    "recent_utterances": {
+      "items": {
+        "$ref": "#/$defs/UtteranceRef"
+      },
+      "maxItems": 5,
+      "title": "Recent Utterances",
+      "type": "array"
+    },
+    "rolling_transcript_2min": {
+      "default": "",
+      "title": "Rolling Transcript 2Min",
+      "type": "string"
+    },
+    "speaking_time_last_5min_sec": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Speaking Time Last 5Min Sec",
+      "type": "number"
+    },
+    "speaking_time_last_60sec": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Speaking Time Last 60Sec",
+      "type": "number"
+    },
+    "speaking_time_total_sec": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Speaking Time Total Sec",
+      "type": "number"
+    },
+    "turn_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Turn Count",
+      "type": "integer"
+    },
+    "vad_active": {
+      "default": false,
+      "description": "Voice activity detected but not yet transcribed.",
+      "title": "Vad Active",
+      "type": "boolean"
+    },
+    "was_interrupted_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Was Interrupted Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "participant_id",
+    "display_name",
+    "joined_at"
+  ],
+  "title": "ParticipantState",
+  "type": "object"
+}

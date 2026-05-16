@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "description": "A single researcher-issued command targeting one session.",
+  "properties": {
+    "command_id": {
+      "format": "uuid",
+      "title": "Command Id",
+      "type": "string"
+    },
+    "command_type": {
+      "enum": [
+        "force_prompt",
+        "force_redirect",
+        "force_summary",
+        "whisper",
+        "mute_moderator",
+        "unmute_moderator",
+        "pause_session",
+        "resume_session",
+        "set_quietness_budget",
+        "flag_moment",
+        "end_session"
+      ],
+      "title": "Command Type",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "description": "Command-specific JSON payload; typed per command_type in Phase 5.",
+      "title": "Payload",
+      "type": "object"
+    },
+    "researcher_id": {
+      "title": "Researcher Id",
+      "type": "string"
+    },
+    "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "command_id",
+    "session_id",
+    "researcher_id",
+    "issued_at",
+    "command_type"
+  ],
+  "title": "ResearcherCommand",
+  "type": "object"
+}

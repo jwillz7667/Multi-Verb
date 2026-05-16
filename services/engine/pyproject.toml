@@ -1,0 +1,175 @@
+[project]
+name = "verbio-engine"
+version = "0.0.0"
+description = "Verbio engine — real-time AI moderator for multi-participant qualitative research sessions."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary — Viral Ventures LLC" }
+authors = [{ name = "Viral Ventures LLC", email = "engineering@viralventures.dev" }]
+keywords = ["livekit", "qualitative-research", "moderator", "fastapi"]
+
+# Runtime dependencies — kept lean for Phase 0. LiveKit Agents, Deepgram,
+# Anthropic, Cartesia, ElevenLabs, SQLAlchemy, asyncpg, redis-py are added
+# in the phase that first uses them (see brief §14).
+dependencies = [
+  "fastapi>=0.115.0,<0.116",
+  "uvicorn[standard]>=0.32.0,<0.35",
+  "pydantic>=2.10.0,<3",
+  "pydantic-settings>=2.6.0,<3",
+  "structlog>=24.4.0,<25",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9",
+  "pytest-asyncio>=0.24.0,<0.25",
+  "pytest-cov>=6.0.0,<7",
+  "hypothesis>=6.122.0,<7",
+  "httpx>=0.28.0,<0.29",
+  "ruff>=0.8.0,<0.9",
+  "mypy>=1.13.0,<2",
+]
+
+[project.scripts]
+verbio-engine = "verbio_engine.main:run"
+verbio-export-schemas = "verbio_engine.schema_export:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["verbio_engine"]
+
+# ---------------------------------------------------------------------------
+# uv — https://docs.astral.sh/uv/
+# ---------------------------------------------------------------------------
+[tool.uv]
+package = true
+dev-dependencies = [
+  "pytest>=8.3.0,<9",
+  "pytest-asyncio>=0.24.0,<0.25",
+  "pytest-cov>=6.0.0,<7",
+  "hypothesis>=6.122.0,<7",
+  "httpx>=0.28.0,<0.29",
+  "ruff>=0.8.0,<0.9",
+  "mypy>=1.13.0,<2",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter + formatter. Strict, opinionated. https://docs.astral.sh/ruff/
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["verbio_engine", "tests"]
+extend-exclude = ["__pycache__", ".venv", "dist", "build"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "UP",   # pyupgrade
+  "N",    # pep8-naming
+  "S",    # bandit security
+  "A",    # flake8-builtins
+  "RET",  # flake8-return
+  "SIM",  # flake8-simplify
+  "TCH",  # flake8-type-checking
+  "PTH",  # flake8-use-pathlib
+  "PL",   # pylint
+  "RUF",  # ruff-specific
+  "ASYNC",
+  "ANN",  # flake8-annotations
+]
+ignore = [
+  "ANN401",   # allow `Any` where the boundary genuinely accepts it (e.g., JSON Schema)
+  "PLR0913",  # function argument count — Pydantic models trip this
+  "S101",     # assert is fine in tests
+  # Pydantic needs the type info at runtime to build validators; moving imports
+  # into TYPE_CHECKING blocks silently breaks model construction.
+  "TC001",
+  "TC002",
+  "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "ANN", "PLR2004"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["verbio_engine"]
+combine-as-imports = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ---------------------------------------------------------------------------
+# mypy --strict. https://mypy.readthedocs.io/
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+no_implicit_reexport = true
+extra_checks = true
+plugins = ["pydantic.mypy"]
+files = ["verbio_engine", "tests"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_decorators = false
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest — coverage gates per brief §13.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+  "-ra",
+  "--strict-config",
+  "--strict-markers",
+  "--tb=short",
+]
+markers = [
+  "integration: integration tests (require docker-compose dev stack)",
+  "slow: tests > 1s",
+]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:pydantic.*",
+]
+
+[tool.coverage.run]
+source = ["verbio_engine"]
+branch = true
+omit = ["verbio_engine/main.py"]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]

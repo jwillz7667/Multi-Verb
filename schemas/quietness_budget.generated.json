@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "description": "Per-session rate limit on moderator speech.",
+  "properties": {
+    "current_window_count": {
+      "default": 0,
+      "description": "Utterances spoken inside the active rolling window.",
+      "minimum": 0,
+      "title": "Current Window Count",
+      "type": "integer"
+    },
+    "last_utterance_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Utterance At"
+    },
+    "max_utterances_per_10min": {
+      "default": 3,
+      "description": "Hard cap on moderator utterances within the rolling 10-minute window.",
+      "exclusiveMinimum": 0,
+      "title": "Max Utterances Per 10Min",
+      "type": "integer"
+    },
+    "min_seconds_between_utterances": {
+      "default": 30.0,
+      "description": "Floor enforced regardless of remaining window capacity.",
+      "minimum": 0.0,
+      "title": "Min Seconds Between Utterances",
+      "type": "number"
+    }
+  },
+  "title": "QuietnessBudget",
+  "type": "object"
+}

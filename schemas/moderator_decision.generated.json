@@ -1,0 +1,200 @@
+{
+  "additionalProperties": false,
+  "description": "Single decision record from one tick of the engine.\n\nInvariants enforced elsewhere (`verbio_engine.tick_loop`):\n  * `was_executed` is True only for non-silent actions that completed\n    before the latency budget elapsed.\n  * `cooldown_until` is computed from the triggering rule's\n    `default_cooldown_sec`; researcher overrides may extend it.",
+  "properties": {
+    "action": {
+      "enum": [
+        "stay_silent",
+        "prompt_participant",
+        "redirect_topic",
+        "summarize_thread",
+        "request_clarification",
+        "suggest_turn_taking",
+        "close_session"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "confidence": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "cooldown_until": {
+      "format": "date-time",
+      "title": "Cooldown Until",
+      "type": "string"
+    },
+    "decision_id": {
+      "format": "uuid",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "llm_output": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Output"
+    },
+    "llm_prompt": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Verbatim mouth-layer input; tightened to a typed shape in Phase 4.",
+      "title": "Llm Prompt"
+    },
+    "reason_codes": {
+      "description": "Structured codes, e.g. ['silence_gap_8s', 'p3_unheard_4min'].",
+      "items": {
+        "type": "string"
+      },
+      "title": "Reason Codes",
+      "type": "array"
+    },
+    "reason_human": {
+      "default": "",
+      "description": "Generated single-sentence rationale shown on the dashboard.",
+      "title": "Reason Human",
+      "type": "string"
+    },
+    "researcher_hint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Free-text guidance from a manual researcher command.",
+      "title": "Researcher Hint"
+    },
+    "researcher_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Researcher Id"
+    },
+    "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "auto",
+        "researcher_manual",
+        "researcher_whisper"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "spoken_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Spoken At"
+    },
+    "suppressed_by": {
+      "description": "['quietness_budget', 'global_cooldown', 'lower_priority_won', ...].",
+      "items": {
+        "type": "string"
+      },
+      "title": "Suppressed By",
+      "type": "array"
+    },
+    "target_participant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Participant Id"
+    },
+    "tick_id": {
+      "description": "Monotonic per-session tick counter.",
+      "minimum": 0,
+      "title": "Tick Id",
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "triggering_rule": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Rule name when source='auto'; null otherwise.",
+      "title": "Triggering Rule"
+    },
+    "tts_audio_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tts Audio Url"
+    },
+    "was_executed": {
+      "default": false,
+      "title": "Was Executed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "decision_id",
+    "session_id",
+    "tick_id",
+    "timestamp",
+    "action",
+    "source",
+    "cooldown_until"
+  ],
+  "title": "ModeratorDecision",
+  "type": "object"
+}

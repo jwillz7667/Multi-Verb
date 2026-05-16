@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "description": "One rule's evaluation result on one tick.",
+  "properties": {
+    "confidence": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "decision_id": {
+      "description": "The decision this evaluation belongs to.",
+      "format": "uuid",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "evaluation_id": {
+      "format": "uuid",
+      "title": "Evaluation Id",
+      "type": "string"
+    },
+    "fired": {
+      "title": "Fired",
+      "type": "boolean"
+    },
+    "predicate_inputs": {
+      "additionalProperties": true,
+      "description": "Snapshot of the values the predicate read for this tick.",
+      "title": "Predicate Inputs",
+      "type": "object"
+    },
+    "rule_name": {
+      "title": "Rule Name",
+      "type": "string"
+    },
+    "rule_version": {
+      "description": "Snapshotted at session start; replay must use this version.",
+      "title": "Rule Version",
+      "type": "string"
+    },
+    "suppressed_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "'cooldown' | 'lower_priority_won' | 'disabled' | 'quietness_budget'.",
+      "title": "Suppressed Reason"
+    }
+  },
+  "required": [
+    "evaluation_id",
+    "decision_id",
+    "rule_name",
+    "rule_version",
+    "fired"
+  ],
+  "title": "RuleEvaluation",
+  "type": "object"
+}
