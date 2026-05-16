@@ -784,3 +784,92 @@ def test_setting_study_prompt_again_replaces_previous() -> None:
     assert snap.study_prompt == "second"
     assert snap.study_prompt_embedding == [2.0]
     assert snap.embedding_model_name == "m2"
+
+
+# ---------------------------------------------------------------------------
+# rolling_transcript_text (Phase 3 L7) — coordinator pulls this for embedding.
+# ---------------------------------------------------------------------------
+
+
+def test_rolling_transcript_text_empty_when_no_segments() -> None:
+    store = _store()
+    assert store.rolling_transcript_text(window_sec=30.0) == ""
+
+
+def test_rolling_transcript_text_returns_recent_finals_in_order() -> None:
+    store = _store()
+    store.record(_join("p1", at=_start()))
+    store.record(_join("p2", at=_start()))
+    store.record(
+        _final("p1", start=_start() + timedelta(seconds=1), duration_sec=1.0, text="alpha")
+    )
+    store.record(_final("p2", start=_start() + timedelta(seconds=3), duration_sec=1.0, text="beta"))
+    store.advance_to(_start() + timedelta(seconds=5))
+
+    text = store.rolling_transcript_text(window_sec=30.0)
+    # Chronological order — alpha first, beta last.
+    assert text == "alpha beta"
+
+
+def test_rolling_transcript_text_excludes_segments_outside_window() -> None:
+    store = _store()
+    store.record(_join("p1", at=_start()))
+    store.record(_final("p1", start=_start() + timedelta(seconds=1), duration_sec=1.0, text="old"))
+    store.record(
+        _final("p1", start=_start() + timedelta(seconds=100), duration_sec=1.0, text="new")
+    )
+    store.advance_to(_start() + timedelta(seconds=105))
+
+    # 30s window from t=105 → includes anything with end_ts >= 75s.
+    # "old" ended at t=2, "new" ended at t=101 → only "new" qualifies.
+    assert store.rolling_transcript_text(window_sec=30.0) == "new"
+
+
+def test_rolling_transcript_text_includes_pending_before_first_advance() -> None:
+    # The coordinator can fire `request_rolling_re_embed` before the
+    # tick loop has ever advanced (an utterance lands between session
+    # start and tick #1). The text view includes pending UtteranceFinalEvents
+    # so the embed reflects the freshest signal regardless of tick cadence.
+    store = _store()
+    store.record(_join("p1", at=_start()))
+    store.record(
+        _final("p1", start=_start() + timedelta(seconds=1), duration_sec=1.0, text="hello")
+    )
+    assert store.rolling_transcript_text(window_sec=30.0) == "hello"
+
+
+def test_rolling_transcript_text_custom_window() -> None:
+    store = _store()
+    store.record(_join("p1", at=_start()))
+    store.record(_final("p1", start=_start() + timedelta(seconds=10), duration_sec=1.0, text="ten"))
+    store.record(
+        _final("p1", start=_start() + timedelta(seconds=50), duration_sec=1.0, text="fifty")
+    )
+    store.advance_to(_start() + timedelta(seconds=60))
+
+    # 30s window at t=60s includes [30s, 60s] — only "fifty".
+    assert store.rolling_transcript_text(window_sec=30.0) == "fifty"
+    # 60s window includes both.
+    assert store.rolling_transcript_text(window_sec=60.0) == "ten fifty"
+
+
+def test_rolling_transcript_text_skips_backchannels() -> None:
+    # Backchannels never enter _global_transcript (they're folded into a
+    # separate counter), so the rolling text excludes them naturally.
+    store = _store()
+    store.record(_join("p1", at=_start()))
+    store.record(
+        _final(
+            "p1",
+            start=_start() + timedelta(seconds=1),
+            duration_sec=0.3,
+            text="mhm",
+            is_backchannel=True,
+        )
+    )
+    store.record(
+        _final("p1", start=_start() + timedelta(seconds=5), duration_sec=1.0, text="real talk")
+    )
+    store.advance_to(_start() + timedelta(seconds=10))
+
+    assert store.rolling_transcript_text(window_sec=30.0) == "real talk"

@@ -15,12 +15,14 @@ Concrete providers (OpenAI, etc.) plug in at process boot from
 `Settings`; the state store accepts the protocol.
 """
 
+from verbio_engine.embeddings.coordinator import EmbeddingCoordinator
 from verbio_engine.embeddings.mock import MockEmbeddingProvider
 from verbio_engine.embeddings.openai import OpenAIEmbeddingProvider
 from verbio_engine.embeddings.protocol import EmbeddingError, EmbeddingProvider
 from verbio_engine.embeddings.similarity import cosine_similarity
 
 __all__ = [
+    "EmbeddingCoordinator",
     "EmbeddingError",
     "EmbeddingProvider",
     "MockEmbeddingProvider",

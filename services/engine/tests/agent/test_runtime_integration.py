@@ -645,3 +645,111 @@ async def test_final_utterance_feeds_state_store_speaking_time(
     utterance_events = [e for e in recorder.events if isinstance(e, UtteranceEventEnvelope)]
     assert len(utterance_events) == 2
     assert {e.payload.is_final for e in utterance_events} == {True, False}
+
+
+# ---------------------------------------------------------------------------
+# Embedding pipeline wiring (Phase 3 L7).
+# ---------------------------------------------------------------------------
+
+
+class _RecordingProvider:
+    """EmbeddingProvider double that records prompt + transcript calls."""
+
+    def __init__(self) -> None:
+        self.dim = 4
+        self.model_name = "rec-embed-v1"
+        self.calls: list[str] = []
+
+    async def embed_one(self, text: str) -> list[float]:
+        self.calls.append(text)
+        # Use a position-dependent vector so different inputs produce
+        # different outputs — lets us assert which call landed in cache.
+        seed = float(len(self.calls))
+        return [seed, 0.0, 0.0, 0.0]
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed_one(t) for t in texts]
+
+
+@pytest.mark.integration
+async def test_persist_utterance_triggers_embed_pipeline(
+    engine: AsyncEngine,
+) -> None:
+    """Phase 3 L7 contract:
+
+    1. `seed_study_prompt` (before tick loop) buffers, then drains as the
+       loop starts.
+    2. Each `is_final=True` `persist_utterance` request triggers the
+       coordinator's single-flight re-embed of the rolling transcript.
+    3. The resulting vectors thread through to `SessionState` snapshots.
+    """
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    await _seed_session(factory, room_name)
+
+    provider = _RecordingProvider()
+    recorder = RecordingPublisher()
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room_name,
+        publisher=recorder,
+        embedding_provider=provider,
+    )
+
+    session_row = await runtime.on_room_connected()
+    started = session_row.actual_start
+    assert started is not None
+    clock = FakeClock(start=started)
+
+    # Seed prompt BEFORE start_tick_loop to exercise the buffer-drain path.
+    runtime.seed_study_prompt("how do you use the music app daily?")
+    runtime.start_tick_loop(started_at=started, clock=clock, interval_sec=0.5)
+
+    try:
+        joined = await runtime.on_participant_joined(
+            ParticipantSnapshot(
+                identity="id-speaker",
+                display_name="Speaker",
+                role="participant",
+            )
+        )
+
+        # Use the fake-clock anchor for the event timestamps so the
+        # store's `advance_to(t)` sees the event as already-occurred and
+        # folds it into `_global_transcript` (the coordinator then reads
+        # that for the rolling-transcript embed). Mixing wall-clock and
+        # fake-clock would leave the event stranded in `_pending`.
+        utt_start = started + timedelta(seconds=0.1)
+        utt_end = utt_start + timedelta(seconds=1.0)
+        await runtime.persist_utterance(
+            UtteranceInsert(
+                session_id=runtime.session_id,
+                participant_id=joined.id,
+                start_ts=utt_start,
+                end_ts=utt_end,
+                text="i mostly use it on the train",
+                confidence=0.95,
+                is_final=True,
+            )
+        )
+
+        # Tick past the utterance so the store folds it; sleep gives the
+        # listener + coordinator a chance to publish + re-embed.
+        clock.advance(2.0)
+        await asyncio.sleep(0.05)
+    finally:
+        await runtime.stop_tick_loop()
+
+    # Provider was called for both the prompt and the rolling transcript.
+    assert provider.calls[0] == "how do you use the music app daily?"
+    rolling_calls = [c for c in provider.calls if "train" in c]
+    assert rolling_calls, "rolling transcript was never embedded"
+
+    # Final snapshot carries both embeddings + the model name.
+    snapshot_events = [e for e in recorder.events if isinstance(e, StateSnapshotEventEnvelope)]
+    assert snapshot_events, "tick loop produced no snapshots"
+    final_state = snapshot_events[-1].payload.state
+    assert final_state.study_prompt == "how do you use the music app daily?"
+    assert final_state.study_prompt_embedding is not None
+    assert final_state.rolling_transcript_30s_embedding is not None
+    assert final_state.embedding_model_name == "rec-embed-v1"

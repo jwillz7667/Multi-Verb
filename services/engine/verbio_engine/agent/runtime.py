@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from verbio_engine.embeddings import EmbeddingCoordinator
 from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
     ParticipantJoin,
@@ -50,10 +51,12 @@ from verbio_engine.state.events import (
 from verbio_engine.tick_loop import Clock, TickLoop, WallClock
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from verbio_engine.embeddings import EmbeddingProvider
     from verbio_engine.persistence import Participant, Session, UtteranceInsert
     from verbio_engine.state.events import StateEvent
 
@@ -134,10 +137,26 @@ class SessionRuntime:
         session_factory: async_sessionmaker[AsyncSession],
         room_name: str,
         publisher: EventPublisher | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        embedding_rolling_window_sec: float = 30.0,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
         self._session_id: uuid.UUID | None = None
+        # Optional embedding pipeline (Phase 3 L7). When `provider` is
+        # None the runtime simply doesn't embed anything — topic_drift
+        # will read `None` for both vectors and stay silent. The
+        # coordinator is constructed lazily after `start_tick_loop`
+        # spins up the state store (the coordinator needs both).
+        self._embedding_provider: EmbeddingProvider | None = embedding_provider
+        self._embedding_window_sec = embedding_rolling_window_sec
+        self._embedding_coordinator: EmbeddingCoordinator | None = None
+        # Buffered until `start_tick_loop`: a worker can seed the prompt
+        # during `on_room_connected` (before the state store exists).
+        self._pending_study_prompt: str | None = None
+        # Holds references to fire-and-forget embed tasks so the event
+        # loop's weak-ref tracking doesn't GC them mid-flight (RUF006).
+        self._bg_embed_tasks: set[asyncio.Task[None]] = set()
         # `livekit_identity → participant_id`. Populated by
         # `on_participant_joined`; the audio pipeline consults this to
         # tag each utterance with the correct DB participant row.
@@ -318,6 +337,12 @@ class SessionRuntime:
                     confidence=record.confidence,
                 )
             )
+            # Rolling transcript embedding lags the event stream by one
+            # async round-trip; this request is single-flight inside the
+            # coordinator so a burst of finals collapses into at most two
+            # provider calls.
+            if self._embedding_coordinator is not None:
+                self._embedding_coordinator.request_rolling_re_embed()
 
     # ---------------------------------------------------------- Tick loop
 
@@ -359,6 +384,20 @@ class SessionRuntime:
             listener=listener,
             scheduled_end_at=scheduled_end_at,
         )
+        if self._embedding_provider is not None:
+            self._embedding_coordinator = EmbeddingCoordinator(
+                provider=self._embedding_provider,
+                store=self._state_store,
+                rolling_window_sec=self._embedding_window_sec,
+            )
+            # Drain any prompt the worker seeded before the store existed.
+            if self._pending_study_prompt is not None:
+                buffered = self._pending_study_prompt
+                self._pending_study_prompt = None
+                # Schedule on the running loop; embed_study_prompt awaits
+                # the provider, which we don't want to do synchronously
+                # inside start_tick_loop.
+                self._spawn_bg_embed(self._embedding_coordinator.embed_study_prompt(buffered))
         self._tick_task = asyncio.create_task(self._tick_loop.run())
         log.info(
             "runtime.tick_loop_started",
@@ -366,6 +405,36 @@ class SessionRuntime:
             interval_sec=interval_sec,
         )
         return self._tick_task
+
+    def seed_study_prompt(self, prompt: str) -> None:
+        """Hand the study prompt to the embedding pipeline.
+
+        Sync / non-blocking. Called once by the worker after the session
+        row is loaded (the prompt comes from the study FK, which Phase 3
+        L9 wires up). Behaviour:
+
+        * No embedding provider configured → no-op (topic_drift stays
+          silent, which is the intended degraded state).
+        * Coordinator already built (called after `start_tick_loop`) →
+          spawn the embed task immediately.
+        * Coordinator not yet built (called before `start_tick_loop`) →
+          buffer the prompt; `start_tick_loop` drains it.
+
+        Re-seeding mid-session is supported (a researcher rewrite of the
+        prompt would re-call this), though no UI exposes that today.
+        """
+        if self._embedding_provider is None:
+            return
+        if self._embedding_coordinator is None:
+            self._pending_study_prompt = prompt
+            return
+        self._spawn_bg_embed(self._embedding_coordinator.embed_study_prompt(prompt))
+
+    def _spawn_bg_embed(self, coro: Coroutine[object, object, None]) -> None:
+        """Spawn a fire-and-forget embed task, holding a ref so it isn't GC'd."""
+        task = asyncio.create_task(coro)
+        self._bg_embed_tasks.add(task)
+        task.add_done_callback(self._bg_embed_tasks.discard)
 
     async def stop_tick_loop(self, *, timeout: float = 5.0) -> None:  # noqa: ASYNC109
         """Request graceful shutdown of the tick loop and await it.
@@ -375,6 +444,12 @@ class SessionRuntime:
         session is marked ended so the final snapshot still lands.
         """
         if self._tick_loop is None or self._tick_task is None:
+            # Even when the tick loop never started, an embedding
+            # coordinator could exist if `start_tick_loop` was called
+            # then aborted; defensively close it if so.
+            if self._embedding_coordinator is not None:
+                await self._embedding_coordinator.aclose(timeout=timeout)
+                self._embedding_coordinator = None
             return
         self._tick_loop.stop()
         try:
@@ -397,6 +472,9 @@ class SessionRuntime:
             )
             self._tick_loop = None
             self._tick_task = None
+            if self._embedding_coordinator is not None:
+                await self._embedding_coordinator.aclose(timeout=timeout)
+                self._embedding_coordinator = None
 
     def _record_state_event(self, event: StateEvent) -> None:
         """Forward a state event to the store, if the tick loop is running."""

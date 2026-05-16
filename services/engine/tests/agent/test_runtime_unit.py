@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -256,3 +256,135 @@ def test_clock_now_returns_aware_utc() -> None:
     rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
     now = rt._clock_now()
     assert now.tzinfo is UTC
+
+
+# ---------------------------------------------------------------------------
+# EmbeddingProvider wiring (Phase 3 L7).
+#
+# The runtime owns an optional EmbeddingProvider. When set, it constructs
+# an EmbeddingCoordinator alongside the state store on `start_tick_loop`,
+# drains any prompt buffered via `seed_study_prompt`, and triggers a
+# rolling re-embed every time an utterance final lands.
+# ---------------------------------------------------------------------------
+
+
+class _CountingProvider:
+    """Minimal EmbeddingProvider stub for runtime wiring tests."""
+
+    def __init__(self) -> None:
+        self.dim = 2
+        self.model_name = "stub-embed"
+        self.calls: list[str] = []
+
+    async def embed_one(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [1.0, 0.0]
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed_one(t) for t in texts]
+
+
+async def test_no_provider_means_no_coordinator() -> None:
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    rt._session_id = uuid.uuid4()
+    started = _utc()
+    clock = FakeClock(start=started)
+
+    rt.start_tick_loop(started_at=started, clock=clock, interval_sec=60.0)
+
+    assert rt._embedding_coordinator is None
+    await rt.stop_tick_loop()
+
+
+async def test_start_tick_loop_builds_coordinator_when_provider_set() -> None:
+    provider = _CountingProvider()
+    rt = SessionRuntime(
+        session_factory=None,  # type: ignore[arg-type]
+        room_name="r",
+        embedding_provider=provider,
+    )
+    rt._session_id = uuid.uuid4()
+    started = _utc()
+    clock = FakeClock(start=started)
+
+    rt.start_tick_loop(started_at=started, clock=clock, interval_sec=60.0)
+
+    assert rt._embedding_coordinator is not None
+    assert rt._embedding_coordinator.model_name == "stub-embed"
+    await rt.stop_tick_loop()
+
+
+async def test_seed_study_prompt_noop_when_no_provider() -> None:
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    # Without a provider this is a no-op — and crucially must not buffer
+    # the prompt (no coordinator will ever drain it).
+    rt.seed_study_prompt("anything")
+    assert rt._pending_study_prompt is None
+
+
+async def test_seed_before_start_buffers_and_drains_on_start() -> None:
+    provider = _CountingProvider()
+    rt = SessionRuntime(
+        session_factory=None,  # type: ignore[arg-type]
+        room_name="r",
+        embedding_provider=provider,
+    )
+    rt._session_id = uuid.uuid4()
+
+    # Buffer the prompt before the tick loop spins up.
+    rt.seed_study_prompt("the music app prompt")
+    assert rt._pending_study_prompt == "the music app prompt"
+
+    started = _utc()
+    clock = FakeClock(start=started)
+    rt.start_tick_loop(started_at=started, clock=clock, interval_sec=60.0)
+
+    # Buffer drained; coordinator should have spawned the embed task.
+    assert rt._pending_study_prompt is None
+
+    await rt.stop_tick_loop()
+
+    # The background embed ran.
+    assert provider.calls == ["the music app prompt"]
+    assert rt._state_store is not None
+    snap = rt._state_store.advance_to(started + timedelta(seconds=1))
+    assert snap.study_prompt == "the music app prompt"
+    assert snap.study_prompt_embedding == [1.0, 0.0]
+
+
+async def test_seed_after_start_spawns_embed_immediately() -> None:
+    provider = _CountingProvider()
+    rt = SessionRuntime(
+        session_factory=None,  # type: ignore[arg-type]
+        room_name="r",
+        embedding_provider=provider,
+    )
+    rt._session_id = uuid.uuid4()
+    started = _utc()
+    clock = FakeClock(start=started)
+    rt.start_tick_loop(started_at=started, clock=clock, interval_sec=60.0)
+
+    rt.seed_study_prompt("late prompt")
+    await rt.stop_tick_loop()
+
+    assert provider.calls == ["late prompt"]
+
+
+async def test_stop_tick_loop_awaits_pending_embed_tasks() -> None:
+    provider = _CountingProvider()
+    rt = SessionRuntime(
+        session_factory=None,  # type: ignore[arg-type]
+        room_name="r",
+        embedding_provider=provider,
+    )
+    rt._session_id = uuid.uuid4()
+    started = _utc()
+    clock = FakeClock(start=started)
+    rt.start_tick_loop(started_at=started, clock=clock, interval_sec=60.0)
+
+    assert rt._embedding_coordinator is not None
+    rt._embedding_coordinator.request_rolling_re_embed()
+
+    await rt.stop_tick_loop()
+    # Coordinator reference cleared on shutdown.
+    assert rt._embedding_coordinator is None

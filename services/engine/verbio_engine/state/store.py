@@ -266,6 +266,54 @@ class StateStore:
         if self._embedding_model_name is None:
             self._embedding_model_name = model_name
 
+    def rolling_transcript_text(self, *, window_sec: float) -> str:
+        """Concatenated finalized text from all speakers in the last `window_sec`.
+
+        The coordinator (Phase 3 L7) reads this on each utterance-final to
+        rebuild the rolling-window string that gets shipped to the
+        EmbeddingProvider. Distinct from `SessionState.rolling_global_transcript_2min`
+        (which is a 2-min view materialised at projection time) so the
+        coordinator can pick its own embedding window independent of what
+        the dashboard renders.
+
+        Includes both folded segments AND pending `UtteranceFinalEvent`s
+        so the coordinator sees the freshest possible signal even when
+        a re-embed request fires between two ticks (the event would
+        otherwise be stuck in the pending buffer until the next tick
+        boundary). Anchors to the most recent advance_to boundary if one
+        has been taken; otherwise to `started_at`. Returns "" when no
+        segments lie in the window — the caller treats that as "nothing
+        to embed".
+        """
+        anchor = self._last_advance_t if self._last_advance_t is not None else self._started_at
+        # Stretch the cutoff forward by anything that's in pending — we
+        # want to include events that have ts > anchor but end_ts within
+        # the window relative to the latest event seen.
+        latest_ts = anchor
+        for event in self._pending:
+            if isinstance(event, UtteranceFinalEvent) and event.end_ts > latest_ts:
+                latest_ts = event.end_ts
+        cutoff = latest_ts - timedelta(seconds=window_sec)
+
+        folded = [seg for seg in self._global_transcript if seg.end_ts >= cutoff]
+
+        pending_segments = [
+            _Segment(
+                participant_id=event.participant_id,
+                start_ts=event.start_ts,
+                end_ts=event.end_ts,
+                duration_sec=event.duration_sec,
+                text=event.text,
+                is_backchannel=event.is_backchannel,
+                utterance_id=event.utterance_id,
+            )
+            for event in self._pending
+            if isinstance(event, UtteranceFinalEvent)
+            and not event.is_backchannel
+            and event.end_ts >= cutoff
+        ]
+        return _concatenate_segments(folded + pending_segments)
+
     def advance_to(self, t: datetime) -> SessionState:
         """Fold pending events with `ts <= t` and project a fresh snapshot."""
         if self._last_advance_t is not None and t < self._last_advance_t:
