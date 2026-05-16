@@ -153,10 +153,12 @@ async def _entrypoint_with_runtime(
     room.on("track_subscribed", _on_track_subscribed)
 
     # Flush session-end, close the SSE publisher, and dispose the DB
-    # pool when LiveKit tears the job down. Order matters: mark the
-    # session ended (audit trail) BEFORE closing the publisher so any
+    # pool when LiveKit tears the job down. Order matters: stop the
+    # tick loop FIRST so the final snapshot lands; THEN mark the session
+    # ended (audit trail) BEFORE closing the publisher so any
     # post-disconnect events still try to fan out.
     async def _shutdown() -> None:
+        await _safe(runtime.stop_tick_loop())
         await _safe(runtime.on_room_disconnected())
         await _safe(publisher.aclose())
         await engine.dispose()
@@ -170,7 +172,7 @@ async def _entrypoint_with_runtime(
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)  # type: ignore[attr-defined]
 
     try:
-        await runtime.on_room_connected()
+        session_row = await runtime.on_room_connected()
     except UnknownSessionError:
         log.error(
             "agent.unknown_session",
@@ -180,10 +182,17 @@ async def _entrypoint_with_runtime(
         await ctx.shutdown()  # type: ignore[attr-defined]
         return
 
-    # The LiveKit framework keeps the task alive until the room ends or
-    # the worker is signalled. There's nothing more for Phase 1 to do
-    # synchronously here — Phase 2 wires the tick loop and Phase 3
-    # introduces decision orchestration.
+    # `actual_start` was just stamped by `mark_started`; it anchors the
+    # StateStore's elapsed-time accounting so dashboard tiles agree with
+    # `sessions.actual_start` to the millisecond.
+    started_at = session_row.actual_start
+    if started_at is None:
+        # Defensive: `mark_started` always sets it, but if a future
+        # change makes that conditional, fall back to the row creation
+        # time so the tick loop never crashes on a None deref.
+        started_at = session_row.created_at
+    runtime.start_tick_loop(started_at=started_at)
+
     log.info("agent.ready", room_name=room.name, session_id=str(runtime.session_id))
 
 
