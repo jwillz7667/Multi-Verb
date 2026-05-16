@@ -25,7 +25,9 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "concurrently --names web,engine --prefix-colors cyan,magenta \"pnpm dev:web\" \"pnpm dev:engine\"",
+    "dev:web": "turbo run dev --filter=@verbio/web...",
+    "dev:engine": "uv run --project services/engine verbio-engine",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
@@ -48,6 +50,7 @@
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
     "@verbio/eslint-config": "workspace:*",
+    "concurrently": "^9.2.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.31.0",
