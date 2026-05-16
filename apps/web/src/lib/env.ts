@@ -59,6 +59,9 @@ const serverSchema = clientSchema.extend({
 
   LIVEKIT_API_KEY: optionalSecret,
   LIVEKIT_API_SECRET: optionalSecret,
+  // Server-side URL — wss:// for browsers, can also accept https://
+  // for Agent dispatch REST calls (the SDK normalises internally).
+  LIVEKIT_URL: optionalUrl,
 });
 
 export type ClientEnv = z.infer<typeof clientSchema>;

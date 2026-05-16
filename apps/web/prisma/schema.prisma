@@ -91,3 +91,70 @@ model VerificationToken {
   @@unique([identifier, token])
   @@map("verification_tokens")
 }
+
+// ============================================================================
+// Domain — moderated sessions, participants, utterances.
+// Mirror of Alembic migration 0003_phase1_persistence (engine side).
+// Engine owns DDL; this file is the typed read/write surface for web.
+//
+// The model is named `ModeratedSession` (not `Session`) because the
+// Auth.js Prisma adapter reserves the `Session` model name above for
+// browser sessions. The underlying table is still `sessions` per the
+// brief's schema (§10.1).
+// ============================================================================
+
+model ModeratedSession {
+  id                          String    @id @default(uuid()) @db.Uuid
+  studyId                     String?   @map("study_id") @db.Uuid
+  status                      String    @default("scheduled")
+  scheduledStart              DateTime? @map("scheduled_start") @db.Timestamptz(6)
+  actualStart                 DateTime? @map("actual_start") @db.Timestamptz(6)
+  actualEnd                   DateTime? @map("actual_end") @db.Timestamptz(6)
+  livekitRoomName             String    @unique(map: "uq_sessions_livekit_room_name") @map("livekit_room_name")
+  configSnapshot              Json      @default("{}") @map("config_snapshot") @db.JsonB
+  recordingUrl                String?   @map("recording_url")
+  perParticipantRecordingUrls Json?     @map("per_participant_recording_urls") @db.JsonB
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  participants Participant[]
+  utterances   Utterance[]
+
+  @@index([studyId], map: "ix_sessions_study_id")
+  @@index([status], map: "ix_sessions_status")
+  @@map("sessions")
+}
+
+model Participant {
+  id               String    @id @default(uuid()) @db.Uuid
+  sessionId        String    @map("session_id") @db.Uuid
+  displayName      String    @map("display_name")
+  role             String
+  joinedAt         DateTime? @map("joined_at") @db.Timestamptz(6)
+  leftAt           DateTime? @map("left_at") @db.Timestamptz(6)
+  livekitIdentity  String    @map("livekit_identity")
+
+  session    ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_participants_session_id_sessions")
+  utterances Utterance[]
+
+  @@unique([sessionId, livekitIdentity], map: "uq_participants_session_id_livekit_identity")
+  @@index([sessionId], map: "ix_participants_session_id")
+  @@map("participants")
+}
+
+model Utterance {
+  id            String   @id @default(uuid()) @db.Uuid
+  sessionId     String   @map("session_id") @db.Uuid
+  participantId String   @map("participant_id") @db.Uuid
+  startTs       DateTime @map("start_ts") @db.Timestamptz(6)
+  endTs         DateTime @map("end_ts") @db.Timestamptz(6)
+  text          String
+  confidence    Float?   @db.Real
+  isFinal       Boolean  @map("is_final")
+
+  session     ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_utterances_session_id_sessions")
+  participant Participant      @relation(fields: [participantId], references: [id], onDelete: Cascade, map: "fk_utterances_participant_id_participants")
+
+  @@index([sessionId, startTs], map: "ix_utterances_session_id_start_ts")
+  @@index([participantId, startTs], map: "ix_utterances_participant_id_start_ts")
+  @@map("utterances")
+}
