@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     redis_url: SecretStr | None = Field(default=None, alias="REDIS_URL")
     redis_namespace: str = Field(default="verbio", alias="REDIS_NAMESPACE")
 
+    # ----- LiveKit Cloud (Phase 1: room join + audio subscribe) -------------
+    # Required at runtime when the agent worker starts. Optional at process
+    # boot so the FastAPI health/admin server can still run in non-agent
+    # roles (e.g., an admin-only deploy). The worker entrypoint asserts
+    # presence before connecting.
+    livekit_url: str | None = Field(default=None, alias="LIVEKIT_URL")
+    livekit_api_key: SecretStr | None = Field(default=None, alias="LIVEKIT_API_KEY")
+    livekit_api_secret: SecretStr | None = Field(default=None, alias="LIVEKIT_API_SECRET")
+    # Identity the moderator agent uses when joining each room. Surfaces
+    # in the dashboard's participant list; do not change without updating
+    # web-side display filters (web hides participants with this identity
+    # from the participant grid).
+    moderator_identity: str = Field(default="verbio-moderator", alias="MODERATOR_IDENTITY")
+    moderator_display_name: str = Field(default="Verbio", alias="MODERATOR_DISPLAY_NAME")
+
     # ----- Service name (for observability) --------------------------------
     service_name: str = Field(default="verbio-engine", alias="OTEL_SERVICE_NAME_ENGINE")
 

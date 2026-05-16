@@ -27,6 +27,10 @@ dependencies = [
   "psycopg2-binary>=2.9.10,<3",
   "asyncpg>=0.30.0,<0.31",
   "redis>=5.2.0,<6",
+  # LiveKit Agents worker (Phase 1: room join + audio subscribe).
+  # `livekit` (the rtc SDK) is pulled in transitively; STT/TTS plugins
+  # land in their own phases via the matching `livekit-agents[...]` extra.
+  "livekit-agents>=1.5.9,<2",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +47,7 @@ dev = [
 
 [project.scripts]
 verbio-engine = "verbio_engine.main:run"
+verbio-engine-agent = "verbio_engine.agent.worker:run_worker"
 verbio-export-schemas = "verbio_engine.schema_export:main"
 
 [build-system]

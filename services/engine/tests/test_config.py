@@ -51,3 +51,33 @@ def test_tick_interval_is_bounded(
     monkeypatch.setenv("TICK_INTERVAL_MS", str(bad_tick))
     with pytest.raises(ValidationError):
         load_settings()
+
+
+def test_livekit_defaults_unconfigured_for_non_agent_processes() -> None:
+    s = Settings()
+
+    # Process can boot without LiveKit creds (admin-only roles); the
+    # agent worker entrypoint asserts presence before connecting.
+    assert s.livekit_url is None
+    assert s.livekit_api_key is None
+    assert s.livekit_api_secret is None
+    assert s.moderator_identity == "verbio-moderator"
+    assert s.moderator_display_name == "Verbio"
+
+
+def test_livekit_overrides_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LIVEKIT_URL", "wss://verbio-test.livekit.cloud")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "APIxxxxxxxxx")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "secretxxxx")
+    monkeypatch.setenv("MODERATOR_IDENTITY", "verbio-agent-stage")
+    monkeypatch.setenv("MODERATOR_DISPLAY_NAME", "Verbio (staging)")
+
+    s = load_settings()
+
+    assert s.livekit_url == "wss://verbio-test.livekit.cloud"
+    assert isinstance(s.livekit_api_key, SecretStr)
+    assert s.livekit_api_key.get_secret_value() == "APIxxxxxxxxx"
+    assert isinstance(s.livekit_api_secret, SecretStr)
+    assert s.livekit_api_secret.get_secret_value() == "secretxxxx"
+    assert s.moderator_identity == "verbio-agent-stage"
+    assert s.moderator_display_name == "Verbio (staging)"
