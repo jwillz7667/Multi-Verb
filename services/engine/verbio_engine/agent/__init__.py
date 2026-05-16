@@ -3,6 +3,7 @@
 Public surface:
   - `SessionRuntime`       : transport-agnostic per-session orchestrator
   - `ParticipantSnapshot`  : lightweight DTO the LiveKit glue passes in
+  - `TrackTranscriber`     : per-track VAD → Deepgram → utterance pipeline
   - `run_worker`           : LiveKit Agents CLI entrypoint
 
 `SessionRuntime` is the heart of the agent. It owns the per-session
@@ -13,10 +14,12 @@ without spinning up a real room. The LiveKit-facing glue lives in
 """
 
 from verbio_engine.agent.runtime import ParticipantSnapshot, SessionRuntime
+from verbio_engine.agent.transcribe import TrackTranscriber
 from verbio_engine.agent.worker import run_worker
 
 __all__ = [
     "ParticipantSnapshot",
     "SessionRuntime",
+    "TrackTranscriber",
     "run_worker",
 ]

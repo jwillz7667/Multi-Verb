@@ -21,18 +21,21 @@ bug in our code can never cause audio to leak from the agent.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from verbio_engine.agent.runtime import (
     ParticipantSnapshot,
     SessionRuntime,
     UnknownSessionError,
 )
+from verbio_engine.agent.transcribe import TrackTranscriber
 from verbio_engine.config import load_settings
 from verbio_engine.logging import configure_logging, get_logger
 from verbio_engine.persistence import create_engine, create_session_factory
 
 if TYPE_CHECKING:
+    from livekit.agents import stt as agents_stt
+
     from verbio_engine.config import Settings
 
 log = get_logger(__name__)
@@ -65,8 +68,16 @@ async def _entrypoint_with_runtime(
         settings.database_url_engine.get_secret_value() if settings.database_url_engine else None,
         "DATABASE_URL_ENGINE",
     )
+    deepgram_key = _require(
+        settings.deepgram_api_key.get_secret_value() if settings.deepgram_api_key else None,
+        "DEEPGRAM_API_KEY",
+    )
     engine = create_engine(db_url, pool_size=4, max_overflow=2)
     factory = create_session_factory(engine)
+
+    # Per-job STT instance; the underlying WebSocket is opened lazily
+    # per `.stream()` call, so one STT object can serve many tracks.
+    stt = _build_stt(settings=settings, deepgram_key=deepgram_key)
 
     room: rtc.Room = ctx.room  # type: ignore[attr-defined]
     runtime = SessionRuntime(session_factory=factory, room_name=room.name)
@@ -100,14 +111,23 @@ async def _entrypoint_with_runtime(
         _publication: rtc.RemoteTrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
-        # L3 will pipe audio frames into VAD + Deepgram here. Phase 1
-        # subscribes only — observation without ingestion.
-        if track.kind == rtc.TrackKind.KIND_AUDIO:
-            log.info(
-                "agent.track_subscribed",
-                participant_identity=participant.identity,
-                track_sid=track.sid,
-            )
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        # Resample to 16 kHz mono inside the SDK so Deepgram + Silero
+        # get the rate they're configured for; saves us a manual
+        # resample pass and a frame-shape mismatch class of bug.
+        audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
+        transcriber = TrackTranscriber(
+            stt=stt,
+            runtime=runtime,
+            participant_identity=participant.identity,
+        )
+        log.info(
+            "agent.transcriber_spawned",
+            participant_identity=participant.identity,
+            track_sid=track.sid,
+        )
+        _spawn(transcriber.run(audio_stream))
 
     room.on("participant_connected", _on_participant_connected)
     room.on("participant_disconnected", _on_participant_disconnected)
@@ -142,6 +162,31 @@ async def _entrypoint_with_runtime(
     # synchronously here — Phase 2 wires the tick loop and Phase 3
     # introduces decision orchestration.
     log.info("agent.ready", room_name=room.name, session_id=str(runtime.session_id))
+
+
+def _build_stt(*, settings: Settings, deepgram_key: str) -> agents_stt.STT[Any]:
+    """Construct the VAD-gated Deepgram STT used by every track in this job.
+
+    Wrapping Deepgram in `StreamAdapter(stt=..., vad=Silero)` means we
+    only pay Deepgram for voiced segments. Silero runs locally on CPU;
+    `force_cpu=True` keeps the worker portable across hosts without a
+    GPU.
+    """
+    from livekit.agents.stt import StreamAdapter
+    from livekit.plugins import deepgram, silero
+
+    base = deepgram.STT(
+        api_key=deepgram_key,
+        model=settings.deepgram_model,
+        language=settings.deepgram_language,
+        interim_results=True,
+        # 16 kHz matches the rate we ask LiveKit to resample to.
+        sample_rate=16000,
+        # Per-track streams: diarization is off (one speaker per stream).
+        enable_diarization=False,
+    )
+    vad = silero.VAD.load(force_cpu=True)
+    return StreamAdapter(stt=base, vad=vad)
 
 
 async def _safe(coro: object) -> None:
@@ -182,6 +227,13 @@ def run_worker() -> None:
     _require(
         settings.livekit_api_secret.get_secret_value() if settings.livekit_api_secret else None,
         "LIVEKIT_API_SECRET",
+    )
+    # Deepgram is checked here too so a missing key fails at process
+    # start, not on first dispatch — otherwise the worker would happily
+    # accept a job and then crash partway through `_entrypoint_with_runtime`.
+    _require(
+        settings.deepgram_api_key.get_secret_value() if settings.deepgram_api_key else None,
+        "DEEPGRAM_API_KEY",
     )
 
     # Imports here, not at module top-level, so `verbio_engine.agent.run_worker`

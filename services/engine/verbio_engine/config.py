@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     moderator_identity: str = Field(default="verbio-moderator", alias="MODERATOR_IDENTITY")
     moderator_display_name: str = Field(default="Verbio", alias="MODERATOR_DISPLAY_NAME")
 
+    # ----- Deepgram (Phase 1: per-track STT) --------------------------------
+    # Required when the agent worker starts; the worker entrypoint asserts
+    # presence so a missing key fails fast at boot, not on first audio
+    # frame. Nova-3 is the default model; per-study overrides land in
+    # Phase 3 when studies become first-class.
+    deepgram_api_key: SecretStr | None = Field(default=None, alias="DEEPGRAM_API_KEY")
+    deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
+    deepgram_language: str = Field(default="en-US", alias="DEEPGRAM_LANGUAGE")
+
     # ----- Service name (for observability) --------------------------------
     service_name: str = Field(default="verbio-engine", alias="OTEL_SERVICE_NAME_ENGINE")
 

@@ -7,9 +7,15 @@ covered by `tests/agent/test_runtime_integration.py`.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from verbio_engine.agent.runtime import ParticipantSnapshot, _parse_role
+from verbio_engine.agent.runtime import (
+    ParticipantSnapshot,
+    SessionRuntime,
+    _parse_role,
+)
 
 
 @pytest.mark.parametrize(
@@ -57,3 +63,56 @@ def test_from_livekit_preserves_metadata_raw() -> None:
 
     assert snap.role == "researcher"
     assert snap.metadata_raw == raw
+
+
+# ---------------------------------------------------------------------------
+# participant_id cache + await_participant_id — pure asyncio, no DB.
+# ---------------------------------------------------------------------------
+
+
+def test_participant_id_for_returns_none_when_unknown() -> None:
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    assert rt.participant_id_for("ghost") is None
+
+
+async def test_await_participant_id_resolves_when_event_fires() -> None:
+    """`track_subscribed` may race ahead of `participant_connected`.
+
+    The transcriber awaits the per-identity Event; once the join
+    handler populates the cache + sets the event, the wait returns.
+    """
+    import uuid
+
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    pid = uuid.uuid4()
+
+    async def _resolve_later() -> None:
+        # Let the awaiter park on the Event first.
+        await asyncio.sleep(0)
+        rt._participant_ids["id-a"] = pid
+        rt._participant_events.setdefault("id-a", asyncio.Event()).set()
+
+    waker = asyncio.create_task(_resolve_later())
+    try:
+        got = await rt.await_participant_id("id-a", timeout=1.0)
+    finally:
+        await waker
+    assert got == pid
+
+
+async def test_await_participant_id_returns_immediately_when_already_cached() -> None:
+    import uuid
+
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    pid = uuid.uuid4()
+    rt._participant_ids["id-cached"] = pid
+
+    # Should not raise TimeoutError even with a tiny timeout.
+    got = await rt.await_participant_id("id-cached", timeout=0.001)
+    assert got == pid
+
+
+async def test_await_participant_id_times_out_when_never_joined() -> None:
+    rt = SessionRuntime(session_factory=None, room_name="r")  # type: ignore[arg-type]
+    with pytest.raises(asyncio.TimeoutError):
+        await rt.await_participant_id("never", timeout=0.05)

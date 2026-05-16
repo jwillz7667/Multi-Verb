@@ -35,8 +35,13 @@ def configure_logging(*, level: LogLevel, json_format: bool) -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
     ]
+    # `format_exc_info` collapses exc_info into a string for the JSON
+    # renderer. ConsoleRenderer formats exceptions itself (with colour
+    # tracebacks); leaving format_exc_info in the dev chain triggers a
+    # UserWarning from structlog.dev. Branch on the renderer choice.
+    if json_format:
+        shared_processors.append(structlog.processors.format_exc_info)
 
     renderer: structlog.types.Processor = (
         structlog.processors.JSONRenderer()

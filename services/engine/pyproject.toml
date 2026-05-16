@@ -31,6 +31,8 @@ dependencies = [
   # `livekit` (the rtc SDK) is pulled in transitively; STT/TTS plugins
   # land in their own phases via the matching `livekit-agents[...]` extra.
   "livekit-agents>=1.5.9,<2",
+  "livekit-plugins-deepgram>=1.5.9,<2",
+  "livekit-plugins-silero>=1.5.9,<2",
 ]
 
 [project.optional-dependencies]
