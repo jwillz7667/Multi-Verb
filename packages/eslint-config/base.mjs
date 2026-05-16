@@ -103,6 +103,15 @@ export default tseslint.config(
           'newlines-between': 'always',
           alphabetize: { order: 'asc', caseInsensitive: true },
           groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index', 'type'],
+          // Force tsconfig path aliases into the `internal` group
+          // regardless of resolver. Without this, eslint invocations
+          // from the monorepo root (no projectService context) classify
+          // `@/lib/foo` as external and disagree with per-package runs.
+          pathGroups: [
+            { pattern: '@/**', group: 'internal', position: 'before' },
+            { pattern: '@verbio/**', group: 'internal', position: 'after' },
+          ],
+          pathGroupsExcludedImportTypes: ['builtin'],
         },
       ],
       'import/no-cycle': ['error', { maxDepth: 10 }],
