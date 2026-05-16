@@ -1,16 +1,15 @@
-"""ORM models for verbio-engine — Phase 1 subset.
+"""ORM models for verbio-engine — Phase 1 + Phase 2 L3 subset.
 
-Mirrors the Postgres schema in brief §10.1. Phase 1 introduces the
-three tables needed for audio plumbing and transcription:
+Mirrors the Postgres schema in brief §10.1. Tables introduced so far:
 
-  - sessions     : one row per moderated session
-  - participants : one row per joined participant (incl. moderator)
-  - utterances   : final + interim STT outputs with timing
+  - sessions        : one row per moderated session (Phase 1)
+  - participants    : one row per joined participant (Phase 1)
+  - utterances      : final + interim STT outputs with timing (Phase 1)
+  - state_snapshots : full SessionState frozen every tick (Phase 2 L3)
 
-`studies` and `decisions`/`rule_evaluations`/`state_snapshots` land in
-later phases per the brief. `sessions.study_id` is intentionally
-nullable until Phase 3 introduces studies, so Phase 1 can create
-sessions standalone.
+`studies` and `decisions`/`rule_evaluations` land in Phase 3.
+`sessions.study_id` is intentionally nullable until Phase 3 introduces
+studies, so Phase 1 sessions can be created standalone.
 
 Column types match the SQL in §10.1; differences are called out inline.
 """
@@ -22,6 +21,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     REAL,
+    BigInteger,
     Boolean,
     ForeignKey,
     Index,
@@ -213,4 +213,49 @@ class Utterance(Base):
         # this index covers the dominant query pattern.
         Index("ix_utterances_session_id_start_ts", "session_id", "start_ts"),
         Index("ix_utterances_participant_id_start_ts", "participant_id", "start_ts"),
+    )
+
+
+class StateSnapshot(Base):
+    """Full SessionState frozen at one tick — the audit-trail backbone.
+
+    Cardinality: 2 Hz x 60-min session = 7200 rows per session. Storage
+    cost is intentional (brief §10.1); the audit value (replay, dominance
+    review, post-hoc rule reasoning) is what justifies it. A retention
+    job downsamples to 1 Hz after 30 days.
+
+    `state` carries the entire Pydantic SessionState as JSONB so the row
+    is self-contained — replay reconstructs the moment without joining
+    back to participants / utterances. The shape is the canonical
+    `SessionState.model_dump(mode="json")` form so cross-language
+    consumers parse it with the shared schema.
+    """
+
+    __tablename__ = "state_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tick_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+    )
+    state: Mapped[dict[str, object]] = mapped_column(JSONB(), nullable=False)
+
+    __table_args__ = (
+        # Replay + tile-rerender both scan by (session_id, tick_id),
+        # newest-last; this index is the dominant query pattern.
+        Index(
+            "ix_state_snapshots_session_id_tick_id",
+            "session_id",
+            "tick_id",
+        ),
     )

@@ -1,25 +1,38 @@
 """Realtime event publishing for the dashboard.
 
-The engine writes utterances (Phase 1) — and later decisions and state
-snapshots (Phase 3) — to Postgres for the audit trail, then publishes a
-lightweight envelope to Redis pub/sub so the Next.js SSE route can fan
-out to live `EventSource` listeners.
+The engine writes utterances (Phase 1) and state snapshots (Phase 2 L3)
+— and later decisions (Phase 3) — to Postgres for the audit trail, then
+publishes a lightweight envelope to Redis pub/sub so the Next.js SSE
+route can fan out to live `EventSource` listeners.
 
 Persistence is the source of truth; pub/sub is fire-and-forget. The web
 SSE route backfills from Postgres on reconnect (last-event-id), so a
 Redis publish that's lost in flight is observable but not data-losing.
 
 Public surface:
-  - `RedisEventPublisher` : connects to Redis, publishes envelopes.
-  - `TranscriptEvent`     : SSE envelope (Pydantic, single source of truth).
-  - `UtteranceEventPayload`: the Phase 1 payload shape.
-  - `channel_for`         : canonical channel name builder.
+  - `RedisEventPublisher`         : connects to Redis, publishes envelopes.
+  - `NullEventPublisher`          : no-op for tests / unconfigured environments.
+  - `EventPublisher`              : structural type for the runtime to depend on.
+  - `TranscriptEvent`             : discriminated-union type alias for any envelope.
+  - `TranscriptEventAdapter`      : Pydantic TypeAdapter for validation + JSON Schema.
+  - `UtteranceEventEnvelope`      : the `type="utterance"` variant.
+  - `UtteranceEventPayload`       : Phase 1 utterance payload.
+  - `StateSnapshotEventEnvelope`  : the `type="state_snapshot"` variant (P2 L3).
+  - `StateSnapshotEventPayload`   : P2 L3 snapshot payload (full SessionState).
+  - `utterance_event`             : convenience constructor for utterance variant.
+  - `state_snapshot_event`        : convenience constructor for snapshot variant.
+  - `channel_for`                 : canonical channel name builder.
 """
 
 from verbio_engine.realtime.events import (
+    StateSnapshotEventEnvelope,
+    StateSnapshotEventPayload,
     TranscriptEvent,
+    TranscriptEventAdapter,
+    UtteranceEventEnvelope,
     UtteranceEventPayload,
     channel_for,
+    state_snapshot_event,
     utterance_event,
 )
 from verbio_engine.realtime.publisher import (
@@ -32,8 +45,13 @@ __all__ = [
     "EventPublisher",
     "NullEventPublisher",
     "RedisEventPublisher",
+    "StateSnapshotEventEnvelope",
+    "StateSnapshotEventPayload",
     "TranscriptEvent",
+    "TranscriptEventAdapter",
+    "UtteranceEventEnvelope",
     "UtteranceEventPayload",
     "channel_for",
+    "state_snapshot_event",
     "utterance_event",
 ]

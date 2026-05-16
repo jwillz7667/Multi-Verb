@@ -22,7 +22,7 @@ def test_export_writes_all_expected_files(tmp_path: Path) -> None:
     written = export_all(tmp_path)
 
     assert len(written) == len(EXPORTED_MODELS)
-    for stem, _ in EXPORTED_MODELS:
+    for stem, _title, _model in EXPORTED_MODELS:
         assert (tmp_path / f"{stem}.generated.json").is_file()
 
 
@@ -33,7 +33,7 @@ def test_export_output_is_deterministic(tmp_path: Path) -> None:
     export_all(first)
     export_all(second)
 
-    for stem, _ in EXPORTED_MODELS:
+    for stem, _title, _model in EXPORTED_MODELS:
         a = (first / f"{stem}.generated.json").read_text(encoding="utf-8")
         b = (second / f"{stem}.generated.json").read_text(encoding="utf-8")
         assert a == b, f"{stem} export changed between runs"
@@ -41,11 +41,11 @@ def test_export_output_is_deterministic(tmp_path: Path) -> None:
 
 def test_export_output_is_valid_json_with_title(tmp_path: Path) -> None:
     export_all(tmp_path)
-    for stem, model in EXPORTED_MODELS:
+    for stem, title, _model in EXPORTED_MODELS:
         contents = (tmp_path / f"{stem}.generated.json").read_text(encoding="utf-8")
         assert contents.endswith("\n"), f"{stem} missing trailing newline"
         payload = json.loads(contents)
-        assert payload["title"] == model.__name__
+        assert payload["title"] == title
 
 
 def test_check_mode_passes_when_in_sync(tmp_path: Path) -> None:

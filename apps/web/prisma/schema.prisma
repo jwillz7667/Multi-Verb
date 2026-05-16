@@ -23,8 +23,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL_POOLED")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL_POOLED")
   directUrl = env("DATABASE_URL_DIRECT")
 }
 
@@ -116,8 +116,9 @@ model ModeratedSession {
   perParticipantRecordingUrls Json?     @map("per_participant_recording_urls") @db.JsonB
   createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  participants Participant[]
-  utterances   Utterance[]
+  participants   Participant[]
+  utterances     Utterance[]
+  stateSnapshots StateSnapshot[]
 
   @@index([studyId], map: "ix_sessions_study_id")
   @@index([status], map: "ix_sessions_status")
@@ -125,13 +126,13 @@ model ModeratedSession {
 }
 
 model Participant {
-  id               String    @id @default(uuid()) @db.Uuid
-  sessionId        String    @map("session_id") @db.Uuid
-  displayName      String    @map("display_name")
-  role             String
-  joinedAt         DateTime? @map("joined_at") @db.Timestamptz(6)
-  leftAt           DateTime? @map("left_at") @db.Timestamptz(6)
-  livekitIdentity  String    @map("livekit_identity")
+  id              String    @id @default(uuid()) @db.Uuid
+  sessionId       String    @map("session_id") @db.Uuid
+  displayName     String    @map("display_name")
+  role            String
+  joinedAt        DateTime? @map("joined_at") @db.Timestamptz(6)
+  leftAt          DateTime? @map("left_at") @db.Timestamptz(6)
+  livekitIdentity String    @map("livekit_identity")
 
   session    ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_participants_session_id_sessions")
   utterances Utterance[]
@@ -157,4 +158,24 @@ model Utterance {
   @@index([sessionId, startTs], map: "ix_utterances_session_id_start_ts")
   @@index([participantId, startTs], map: "ix_utterances_participant_id_start_ts")
   @@map("utterances")
+}
+
+// ============================================================================
+// State snapshots — full SessionState per tick (brief §10.1).
+// Mirror of Alembic migration 0004_state_snapshots (engine side).
+// Web reads from this table to backfill the SSE stream on reconnect
+// (last-event-id resolution).
+// ============================================================================
+
+model StateSnapshot {
+  id        String   @id(map: "pk_state_snapshots") @default(uuid()) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  tickId    BigInt   @map("tick_id")
+  ts        DateTime @db.Timestamptz(6)
+  state     Json     @db.JsonB
+
+  session ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_state_snapshots_session_id_sessions")
+
+  @@index([sessionId, tickId], map: "ix_state_snapshots_session_id_tick_id")
+  @@map("state_snapshots")
 }

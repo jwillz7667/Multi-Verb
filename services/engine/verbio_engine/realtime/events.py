@@ -1,14 +1,23 @@
 """SSE event envelopes — Pydantic source of truth.
 
 Per brief §11 the dashboard observes live state via Server-Sent Events
-fed by Redis pub/sub on `verbio:events:{session_id}`. The envelope is
-`{type, id, payload}` where `type` discriminates between utterance,
-decision, and state-snapshot events.
+fed by Redis pub/sub on `verbio:events:{session_id}`. Each envelope is
+shaped `{type, id, session_id, ts, payload}` where `type` is the
+discriminator across variants.
 
-Phase 1 emits **only** the `utterance` variant (the dashboard shows a
-live transcript and nothing else, per Phase 1 done-when). Decision and
-state-snapshot variants land in Phase 3 when the rules engine starts
-firing; the union here will grow at that point.
+Variants today:
+  - `utterance`      (Phase 1): one STT segment
+  - `state_snapshot` (Phase 2 L3): full SessionState frozen at one tick
+
+Variants planned:
+  - `decision`       (Phase 3): rule-driven moderator decision
+
+`TranscriptEvent` is a discriminated union built from the per-variant
+envelope classes; consumers should construct via the typed envelope
+classes (e.g., `UtteranceEventEnvelope(...)` or the `utterance_event`
+helper) and validate inbound JSON via `TranscriptEventAdapter`. The
+TypeAdapter route exposes a single `json_schema()` that the shared-types
+pipeline ships to the web side intact.
 
 Why Pydantic in the engine, not Zod in the web: the brief mandates a
 single canonical source for cross-service shapes (Pydantic → JSON Schema
@@ -20,9 +29,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, TypeAdapter
+
+from verbio_engine.domain.session_state import SessionState
 
 
 def channel_for(session_id: uuid.UUID) -> str:
@@ -33,6 +44,11 @@ def channel_for(session_id: uuid.UUID) -> str:
     fixed by brief §11.
     """
     return f"verbio:events:{session_id}"
+
+
+# ---------------------------------------------------------------------------
+# Utterance variant (Phase 1)
+# ---------------------------------------------------------------------------
 
 
 class UtteranceEventPayload(BaseModel):
@@ -60,18 +76,12 @@ class UtteranceEventPayload(BaseModel):
     end_ts: datetime
 
 
-class TranscriptEvent(BaseModel):
-    """Envelope published to `verbio:events:{session_id}` for SSE fan-out.
+class UtteranceEventEnvelope(BaseModel):
+    """SSE envelope for an STT-derived utterance.
 
-    Phase 1 always has `type="utterance"`. The literal-narrowed union
-    grows when Phase 3 introduces decision and state-snapshot events;
-    web's discriminated parser then expands accordingly.
-
-    `id` is the SSE event id — clients echo it back as `Last-Event-ID`
-    on reconnect, and the web SSE route uses it to skip already-seen
-    rows during the Postgres backfill. For utterance events we use the
-    utterance UUID directly; it's globally unique and resolvable to a
-    row for the backfill cursor.
+    `id` is the utterance UUID as a string — SSE clients echo it back as
+    `Last-Event-ID` on reconnect, and the web SSE route uses it to skip
+    already-seen rows during the Postgres backfill.
 
     `ts` is the server-side moment the event was created (not the
     utterance's start_ts), used purely for diagnostics — ordering is by
@@ -87,6 +97,78 @@ class TranscriptEvent(BaseModel):
     payload: UtteranceEventPayload
 
 
+# ---------------------------------------------------------------------------
+# State-snapshot variant (Phase 2 L3)
+# ---------------------------------------------------------------------------
+
+
+class StateSnapshotEventPayload(BaseModel):
+    """Snapshot of one full `SessionState` row at the moment it was persisted.
+
+    Carries the entire SessionState so the dashboard can render every
+    tile (speaking time, last spoke, currently_speaking, silence_run,
+    flags) from a single message. `snapshot_id` is the Postgres row id;
+    keeping it here as well as on the envelope mirrors the utterance
+    variant and gives the web side typed-UUID access without re-parsing
+    the envelope id.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    snapshot_id: uuid.UUID
+    state: SessionState
+
+
+class StateSnapshotEventEnvelope(BaseModel):
+    """SSE envelope for one per-tick SessionState snapshot.
+
+    `id` is the snapshot row UUID as a string; `ts` is the wall-clock
+    moment the tick projected the snapshot (mirrors `state.t`). The
+    Last-Event-ID cursor uses `id` to backfill from
+    `state_snapshots.id > {last_id}` on reconnect — the table's
+    (session_id, tick_id) index covers that scan cheaply.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["state_snapshot"]
+    id: str = Field(min_length=1)
+    session_id: uuid.UUID
+    ts: datetime
+    payload: StateSnapshotEventPayload
+
+
+# ---------------------------------------------------------------------------
+# Union + validation entry-point
+# ---------------------------------------------------------------------------
+
+
+TranscriptEvent = Annotated[
+    UtteranceEventEnvelope | StateSnapshotEventEnvelope,
+    Field(discriminator="type"),
+]
+"""Discriminated union over every per-session SSE envelope variant.
+
+Phase 3 will append a `decision` variant; the discriminator pattern
+keeps that change additive on the web side."""
+
+
+TranscriptEventAdapter: TypeAdapter[UtteranceEventEnvelope | StateSnapshotEventEnvelope] = (
+    TypeAdapter(TranscriptEvent)
+)
+"""Single entry-point for validation, JSON Schema export, and bulk dump.
+
+Use this rather than per-class `model_validate` when parsing inbound
+SSE bodies — it applies the discriminator and returns the correct
+envelope subtype.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
+
+
 def utterance_event(
     *,
     utterance_id: uuid.UUID,
@@ -99,13 +181,13 @@ def utterance_event(
     confidence: float | None,
     start_ts: datetime,
     end_ts: datetime,
-) -> TranscriptEvent:
-    """Build a `TranscriptEvent` for a freshly-persisted utterance.
+) -> UtteranceEventEnvelope:
+    """Build a `UtteranceEventEnvelope` for a freshly-persisted utterance.
 
     Convenience constructor so call-sites don't repeat the envelope
     boilerplate (id mirroring utterance_id, ts=now, type literal).
     """
-    return TranscriptEvent(
+    return UtteranceEventEnvelope(
         type="utterance",
         id=str(utterance_id),
         session_id=session_id,
@@ -123,3 +205,43 @@ def utterance_event(
             end_ts=end_ts,
         ),
     )
+
+
+def state_snapshot_event(
+    *,
+    snapshot_id: uuid.UUID,
+    state: SessionState,
+) -> StateSnapshotEventEnvelope:
+    """Build a `StateSnapshotEventEnvelope` for a freshly-persisted snapshot.
+
+    Mirrors `utterance_event`: the envelope `id` echoes the row UUID,
+    `ts` is `state.t` so consumers can order by tick wall-clock without
+    parsing the nested payload.
+    """
+    return StateSnapshotEventEnvelope(
+        type="state_snapshot",
+        id=str(snapshot_id),
+        session_id=state.session_id,
+        ts=state.t,
+        payload=StateSnapshotEventPayload(
+            snapshot_id=snapshot_id,
+            state=state,
+        ),
+    )
+
+
+# Re-export `NonNegativeInt` so consumers of the module that need to
+# annotate tick counters can pull it from here without a second import
+# (keeps the public surface coherent).
+__all__ = [
+    "NonNegativeInt",
+    "StateSnapshotEventEnvelope",
+    "StateSnapshotEventPayload",
+    "TranscriptEvent",
+    "TranscriptEventAdapter",
+    "UtteranceEventEnvelope",
+    "UtteranceEventPayload",
+    "channel_for",
+    "state_snapshot_event",
+    "utterance_event",
+]

@@ -27,9 +27,20 @@ from typing import Protocol, runtime_checkable
 from redis import asyncio as redis_async
 
 from verbio_engine.logging import get_logger
-from verbio_engine.realtime.events import TranscriptEvent, channel_for
+from verbio_engine.realtime.events import (
+    StateSnapshotEventEnvelope,
+    UtteranceEventEnvelope,
+    channel_for,
+)
 
 log = get_logger(__name__)
+
+
+# Concrete union the publisher dispatches over. We accept the variants
+# directly (not the `TranscriptEvent` discriminated alias) so the
+# publisher API remains a normal nominal type that mypy can narrow on
+# attribute access without unwrapping the `Annotated[...]` wrapper.
+_PublishableEvent = UtteranceEventEnvelope | StateSnapshotEventEnvelope
 
 
 @runtime_checkable
@@ -40,13 +51,13 @@ class EventPublisher(Protocol):
     in-memory fake during tests without inheriting from a base class.
     """
 
-    async def publish(self, event: TranscriptEvent) -> int: ...
+    async def publish(self, event: _PublishableEvent) -> int: ...
 
     async def aclose(self) -> None: ...
 
 
 class RedisEventPublisher:
-    """Async pub/sub publisher for `TranscriptEvent` envelopes."""
+    """Async pub/sub publisher for SSE envelopes."""
 
     def __init__(self, url: str) -> None:
         """Store the connection URL; connection is opened lazily.
@@ -64,7 +75,7 @@ class RedisEventPublisher:
             decode_responses=False,
         )
 
-    async def publish(self, event: TranscriptEvent) -> int:
+    async def publish(self, event: _PublishableEvent) -> int:
         """Publish one envelope to `verbio:events:{session_id}`.
 
         Returns the number of subscribers that received the message (per
@@ -73,8 +84,8 @@ class RedisEventPublisher:
 
         Failures are logged and swallowed: the canonical row is already
         in Postgres, and the SSE route's reconnect backfill will pick
-        the utterance up. We refuse to crash the audio pipeline because
-        Redis is degraded.
+        the row up. We refuse to crash the audio pipeline because Redis
+        is degraded.
         """
         channel = channel_for(event.session_id)
         # `by_alias=False` is the default — our field names already
@@ -115,7 +126,7 @@ class NullEventPublisher:
     doesn't branch on the publisher type.
     """
 
-    async def publish(self, event: TranscriptEvent) -> int:
+    async def publish(self, event: _PublishableEvent) -> int:
         _ = event  # interface — argument deliberately ignored.
         return 0
 

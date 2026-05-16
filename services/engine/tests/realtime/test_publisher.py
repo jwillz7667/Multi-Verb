@@ -17,15 +17,16 @@ import pytest
 from verbio_engine.realtime import (
     NullEventPublisher,
     RedisEventPublisher,
-    TranscriptEvent,
+    TranscriptEventAdapter,
+    UtteranceEventEnvelope,
     UtteranceEventPayload,
     channel_for,
 )
 
 
-def _event() -> TranscriptEvent:
+def _event() -> UtteranceEventEnvelope:
     session_id = uuid.uuid4()
-    return TranscriptEvent(
+    return UtteranceEventEnvelope(
         type="utterance",
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -60,9 +61,11 @@ async def test_publish_sends_to_canonical_channel(monkeypatch: pytest.MonkeyPatc
 
     assert delivered == 3
     assert calls and calls[0][0] == channel_for(event.session_id)
-    # The body is the canonical Pydantic JSON serialisation.
+    # The body is the canonical Pydantic JSON serialisation — round-trip
+    # via the discriminated-union adapter rather than the concrete class
+    # so the test exercises the same parse path the SSE consumer uses.
     body = calls[0][1]
-    assert TranscriptEvent.model_validate_json(body) == event
+    assert TranscriptEventAdapter.validate_json(body) == event
 
     await pub.aclose()
 
