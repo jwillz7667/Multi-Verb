@@ -53,4 +53,10 @@ def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
 
-    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+    # Clamp to [-1, 1]: the mathematical bound is exact, but float ops
+    # can push the result a few ULPs past either side (Hypothesis
+    # surfaces this with tiny-magnitude vectors). Callers downstream
+    # use the value as a threshold input and rely on the documented
+    # range, so the clamp belongs here rather than at every callsite.
+    raw = dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+    return max(-1.0, min(1.0, raw))

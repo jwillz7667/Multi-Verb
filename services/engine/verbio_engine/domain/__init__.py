@@ -21,6 +21,7 @@ from verbio_engine.domain.participant import (
 )
 from verbio_engine.domain.rules_config import RulesConfig
 from verbio_engine.domain.session_state import SessionState
+from verbio_engine.domain.study import SessionConfigSnapshot
 
 __all__ = [
     "DecisionAction",
@@ -33,6 +34,7 @@ __all__ = [
     "ResearcherCommandType",
     "RuleEvaluation",
     "RulesConfig",
+    "SessionConfigSnapshot",
     "SessionState",
     "UtteranceRef",
 ]

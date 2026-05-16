@@ -2,6 +2,7 @@
 
 Mirrors the Postgres schema in brief §10.1. Tables introduced so far:
 
+  - studies          : reusable session configuration (Phase 3 L11)
   - sessions         : one row per moderated session (Phase 1)
   - participants     : one row per joined participant (Phase 1)
   - utterances       : final + interim STT outputs with timing (Phase 1)
@@ -9,8 +10,9 @@ Mirrors the Postgres schema in brief §10.1. Tables introduced so far:
   - decisions        : one row per tick — the action chosen or stay_silent (Phase 3 L9)
   - rule_evaluations : one row per rule per tick — fired or not (Phase 3 L9)
 
-`studies` is still pending; `sessions.study_id` remains nullable until
-the studies table lands so Phase 1-2 sessions stay creatable standalone.
+`sessions.study_id` is nullable so standalone Phase 1-2 sessions stay
+creatable; production traffic always attaches a study (web enforces
+this at creation time).
 
 Column types match the SQL in §10.1; differences are called out inline.
 """
@@ -47,6 +49,74 @@ ParticipantRole = str
 """'participant' | 'researcher' | 'moderator'."""
 
 
+class Study(Base):
+    """A reusable session configuration — prompt, rules, persona, retention.
+
+    Studies are created by researchers in the web app; the engine treats
+    them as read-only inputs. Sessions reference their study and at
+    start-time snapshot the study's `rules_config` + `rules_version`
+    into `sessions.config_snapshot` so replay reads the frozen
+    configuration even if the study is later edited (brief §7.5 — rule
+    versioning is sacred).
+
+    `prompt_embedding` is JSONB-typed today (a serialized float array);
+    a later migration will introduce pgvector and migrate the column.
+    The topic_drift rule embeds in-process for now so the absence of
+    this cache only costs us a re-embed on cold start.
+    """
+
+    __tablename__ = "studies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(Text(), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text(), nullable=False)
+    prompt_embedding: Mapped[list[float] | None] = mapped_column(
+        JSONB(),
+        nullable=True,
+    )
+    rules_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=dict,
+    )
+    rules_version: Mapped[str] = mapped_column(Text(), nullable=False)
+    moderator_persona: Mapped[dict[str, object]] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=dict,
+    )
+    retention_policy: Mapped[dict[str, object]] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    # Auth.js user UUID from the web service. No FK because the engine
+    # doesn't own the users table; see migration docstring.
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+    )
+
+    sessions: Mapped[list[Session]] = relationship(
+        back_populates="study",
+        lazy="raise",
+    )
+
+
 class Session(Base):
     """A moderated session — one LiveKit room, one engine process."""
 
@@ -57,10 +127,11 @@ class Session(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    # Nullable until Phase 3 wires studies in. The FK is *declared* now so
-    # the migration only needs ALTER COLUMN ... SET NOT NULL later.
+    # FK landed in Phase 3 L11; nullable so standalone Phase 1-2 sessions
+    # still work. Production web flow always attaches a study.
     study_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
+        ForeignKey("studies.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -104,6 +175,10 @@ class Session(Base):
         server_default=func.now(),
     )
 
+    study: Mapped[Study | None] = relationship(
+        back_populates="sessions",
+        lazy="raise",
+    )
     participants: Mapped[list[Participant]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",

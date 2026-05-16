@@ -35,8 +35,10 @@ from verbio_engine.rules.unheard_participant import (
     UnheardParticipantConfig,
     UnheardParticipantRule,
 )
+from verbio_engine.rules.v1 import V1_RULES_VERSION, build_v1_registry
 
 __all__ = [
+    "V1_RULES_VERSION",
     "CrossTalkPatternConfig",
     "CrossTalkPatternRule",
     "DuplicateRuleError",
@@ -55,5 +57,6 @@ __all__ = [
     "UnheardParticipantConfig",
     "UnheardParticipantRule",
     "UnknownRuleError",
+    "build_v1_registry",
     "resolve",
 ]

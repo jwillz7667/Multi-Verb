@@ -23,15 +23,18 @@ import asyncio
 import json
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from verbio_engine.decisions import DecisionTickListener
+from verbio_engine.domain.rules_config import RulesConfig
+from verbio_engine.domain.study import SessionConfigSnapshot
 from verbio_engine.embeddings import EmbeddingCoordinator
 from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
     ParticipantJoin,
     ParticipantRepo,
     SessionRepo,
+    StudyRepo,
     UtteranceRepo,
 )
 from verbio_engine.realtime import (
@@ -39,6 +42,7 @@ from verbio_engine.realtime import (
     NullEventPublisher,
     utterance_event,
 )
+from verbio_engine.rules import V1_RULES_VERSION
 from verbio_engine.state import (
     PersistAndPublishListener,
     StateStore,
@@ -143,6 +147,7 @@ class SessionRuntime:
         embedding_provider: EmbeddingProvider | None = None,
         embedding_rolling_window_sec: float = 30.0,
         rules_registry: RulesRegistry | None = None,
+        rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
@@ -151,7 +156,15 @@ class SessionRuntime:
         # runs the resolver and persists a decisions/rule_evaluations
         # batch each tick. Worker code injects the v1 registry; tests
         # leave it None when they're not exercising the decisions path.
+        # Phase 3 L11: `rules_registry_factory` is the auto-build path —
+        # when set AND no explicit registry was injected AND the session
+        # has a study attached, the runtime builds a per-session registry
+        # from the study's snapshotted RulesConfig at `on_room_connected`.
+        # An explicit `rules_registry` always wins to keep test ergonomics.
         self._rules_registry: RulesRegistry | None = rules_registry
+        self._rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = (
+            rules_registry_factory
+        )
         # Optional embedding pipeline (Phase 3 L7). When `provider` is
         # None the runtime simply doesn't embed anything — topic_drift
         # will read `None` for both vectors and stay silent. The
@@ -259,7 +272,13 @@ class SessionRuntime:
         return self._participant_ids[identity]
 
     async def on_room_connected(self) -> Session:
-        """Resolve the Session row and mark it `live`.
+        """Resolve the Session row, mark it `live`, and freeze its config.
+
+        Phase 3 L11: this is where the study's `RulesConfig` is captured
+        into `sessions.config_snapshot` (brief §7.5 — rule versioning is
+        sacred). The snapshot is written exactly once per session — on
+        the first start — so a worker restart preserves the original
+        configuration even if the study has been edited in the meantime.
 
         Raises:
             UnknownSessionError: no row matches `self._room_name`.
@@ -271,7 +290,88 @@ class SessionRuntime:
                 raise UnknownSessionError(self._room_name)
             await sess_repo.mark_started(row)
             self._session_id = row.id
+            await self._snapshot_session_config(db, row)
             return row
+
+    async def _snapshot_session_config(self, db: AsyncSession, row: Session) -> None:
+        """Freeze the study's config into `sessions.config_snapshot`.
+
+        Idempotent: on a re-entry (worker restart) the existing snapshot
+        is preserved verbatim and only the in-memory registry is
+        rebuilt from it. The brief is explicit that historical sessions
+        must keep their original configuration even if the study is
+        later edited (§7.5).
+        """
+        existing = row.config_snapshot or {}
+        if existing:
+            self._maybe_build_registry_from_snapshot(existing)
+            return
+
+        snapshot = await self._build_config_snapshot(db, row)
+        row.config_snapshot = snapshot.model_dump(mode="json")
+        await db.flush([row])
+        self._maybe_build_registry_from_snapshot(row.config_snapshot)
+        log.info(
+            "runtime.config_snapshot_frozen",
+            session_id=str(row.id),
+            study_id=str(row.study_id) if row.study_id else None,
+            rules_version=snapshot.rules_config.rules_version,
+        )
+
+    async def _build_config_snapshot(
+        self,
+        db: AsyncSession,
+        row: Session,
+    ) -> SessionConfigSnapshot:
+        """Construct the snapshot from the attached study, or v1 defaults."""
+        if row.study_id is None:
+            # Standalone session (Phase 1-2 path, plus tests that don't
+            # seed a study). Snapshot the defaults so the audit trail
+            # carries *something* — replay can still reconstruct a
+            # default registry from this.
+            return SessionConfigSnapshot(
+                rules_config=RulesConfig(rules_version=V1_RULES_VERSION),
+            )
+
+        study_repo = StudyRepo(db)
+        study = await study_repo.get_by_id(row.study_id)
+        if study is None:
+            # Dangling FK — study was deleted between session schedule
+            # and start. Log loudly and fall back to defaults so the
+            # session still runs in shadow mode rather than crashing.
+            log.warning(
+                "runtime.study_missing_for_session",
+                session_id=str(row.id),
+                study_id=str(row.study_id),
+            )
+            return SessionConfigSnapshot(
+                rules_config=RulesConfig(rules_version=V1_RULES_VERSION),
+            )
+
+        # JSONB columns are typed as `dict[str, object]` on the ORM but
+        # `RulesConfig.rules` requires `dict[str, dict[str, Any]]`. Cast
+        # at the boundary; Pydantic re-validates the shape on the next line.
+        rules_config = RulesConfig(
+            rules_version=study.rules_version,
+            rules=cast("dict[str, dict[str, Any]]", dict(study.rules_config)),
+        )
+        return SessionConfigSnapshot(
+            rules_config=rules_config,
+            moderator_persona=cast("dict[str, Any]", dict(study.moderator_persona)),
+            retention_policy=cast("dict[str, Any]", dict(study.retention_policy)),
+        )
+
+    def _maybe_build_registry_from_snapshot(self, snapshot_data: dict[str, object]) -> None:
+        """Build the per-session registry from a config snapshot dict.
+
+        Skipped when an explicit `rules_registry` was injected (tests)
+        or when no `rules_registry_factory` was wired (the runtime
+        opts out of decisions entirely).
+        """
+        if self._rules_registry is not None or self._rules_registry_factory is None:
+            return
+        snapshot = SessionConfigSnapshot.model_validate(snapshot_data)
+        self._rules_registry = self._rules_registry_factory(snapshot.rules_config)
 
     async def on_participant_joined(self, snapshot: ParticipantSnapshot) -> Participant:
         """Upsert the participant row for a connect/reconnect event."""

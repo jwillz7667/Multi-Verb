@@ -37,6 +37,7 @@ from verbio_engine.realtime import (
     NullEventPublisher,
     RedisEventPublisher,
 )
+from verbio_engine.rules import build_v1_registry
 
 if TYPE_CHECKING:
     from livekit.agents import stt as agents_stt
@@ -95,10 +96,17 @@ async def _entrypoint_with_runtime(
     )
 
     room: rtc.Room = ctx.room  # type: ignore[attr-defined]
+    # `rules_registry_factory` opts the runtime into the per-session
+    # registry build path (Phase 3 L11). The factory consumes the
+    # `RulesConfig` the runtime snapshots from the study at session
+    # start, so a study that overrides `silence_gap.threshold_sec` to
+    # 12.0 propagates here without any worker-side coupling to the
+    # rule set.
     runtime = SessionRuntime(
         session_factory=factory,
         room_name=room.name,
         publisher=publisher,
+        rules_registry_factory=build_v1_registry,
     )
 
     # Hold strong references to in-flight tasks so they don't get

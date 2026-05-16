@@ -6,6 +6,7 @@ introspection; runtime queries go through asyncpg via an async
 
 Public surface:
   - `Base`                  : declarative base for all ORM models
+  - `Study`                 : studies table model (P3 L11)
   - `Session`               : sessions table model
   - `Participant`           : participants table model
   - `Utterance`             : utterances table model
@@ -15,6 +16,8 @@ Public surface:
   - `create_engine`         : async engine factory
   - `session_factory`       : async sessionmaker factory
   - `SessionRepo`           : lifecycle API for sessions
+  - `StudyRepo`             : lookup API for studies (P3 L11)
+  - `StudyInsert`           : input record for study insert (P3 L11)
   - `ParticipantRepo`       : join/leave API for participants
   - `ParticipantJoin`       : input record for participant upsert
   - `UtteranceRepo`         : write/read API for utterances
@@ -42,6 +45,7 @@ from verbio_engine.persistence.models import (
     RuleEvaluation,
     Session,
     StateSnapshot,
+    Study,
     Utterance,
 )
 from verbio_engine.persistence.repositories.decisions import (
@@ -60,6 +64,10 @@ from verbio_engine.persistence.repositories.sessions import SessionRepo
 from verbio_engine.persistence.repositories.state_snapshots import (
     StateSnapshotInsert,
     StateSnapshotRepo,
+)
+from verbio_engine.persistence.repositories.studies import (
+    StudyInsert,
+    StudyRepo,
 )
 from verbio_engine.persistence.repositories.utterances import (
     UtteranceInsert,
@@ -82,6 +90,9 @@ __all__ = [
     "StateSnapshot",
     "StateSnapshotInsert",
     "StateSnapshotRepo",
+    "Study",
+    "StudyInsert",
+    "StudyRepo",
     "Utterance",
     "UtteranceInsert",
     "UtteranceRepo",
