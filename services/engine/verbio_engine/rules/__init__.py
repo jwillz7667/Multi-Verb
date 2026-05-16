@@ -21,6 +21,10 @@ from verbio_engine.rules.registry import (
     UnknownRuleError,
 )
 from verbio_engine.rules.silence_gap import SilenceGapConfig, SilenceGapRule
+from verbio_engine.rules.speaker_imbalance import (
+    SpeakerImbalanceConfig,
+    SpeakerImbalanceRule,
+)
 from verbio_engine.rules.unheard_participant import (
     UnheardParticipantConfig,
     UnheardParticipantRule,
@@ -35,6 +39,8 @@ __all__ = [
     "RulesRegistry",
     "SilenceGapConfig",
     "SilenceGapRule",
+    "SpeakerImbalanceConfig",
+    "SpeakerImbalanceRule",
     "UnheardParticipantConfig",
     "UnheardParticipantRule",
     "UnknownRuleError",
