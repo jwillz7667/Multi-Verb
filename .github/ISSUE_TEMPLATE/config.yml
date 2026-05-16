@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure
+    url: https://github.com/jwillz7667/Multi-Verb/blob/main/SECURITY.md
+    about: Please review SECURITY.md and report security issues PRIVATELY — never in public issues.

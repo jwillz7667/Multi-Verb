@@ -1,0 +1,26 @@
+# Verbio code ownership — GitHub auto-requests review from listed owners.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Order matters: later, more-specific entries override earlier ones.
+
+# Default owner for everything
+*                                   @jwillz7667
+
+# Brief and architecture docs require careful review — same owner today, expand as the team grows.
+verbio-engineering-brief.md         @jwillz7667
+CLAUDE.md                           @jwillz7667
+docs/                               @jwillz7667
+docs/adr/                           @jwillz7667
+
+# Shared types — schema drift is a P0 bug, so reviewed centrally
+schemas/                            @jwillz7667
+packages/shared-types/              @jwillz7667
+
+# Infrastructure
+infra/                              @jwillz7667
+.github/                            @jwillz7667
+.github/workflows/                  @jwillz7667
+
+# License / legal
+LICENSE                             @jwillz7667
+SECURITY.md                         @jwillz7667

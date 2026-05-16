@@ -1,0 +1,204 @@
+VERBIO PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Viral Ventures LLC
+Maple Grove, Minnesota, United States of America
+All Rights Reserved.
+
+================================================================================
+NOTICE: This is proprietary and confidential software. Unauthorized copying,
+modification, distribution, public display, public performance, or use of this
+software, in whole or in part, via any medium, is strictly prohibited and may
+result in civil and criminal penalties.
+================================================================================
+
+1. DEFINITIONS
+
+   "Company" means Viral Ventures LLC, a Minnesota limited liability company
+   with its principal place of business in Maple Grove, Minnesota, USA.
+
+   "Software" means the source code, object code, executables, libraries,
+   documentation, configuration files, database schemas, designs,
+   specifications, prompts, models, fine-tuning data, audio assets, and all
+   other materials contained in, or generated from, this repository, including
+   all versions, branches, releases, modifications, enhancements, and
+   derivative works thereof.
+
+   "Authorized User" means a natural person who has been granted access to the
+   Software pursuant to a written agreement signed by an authorized officer of
+   the Company, and only for the duration and scope of that agreement.
+
+2. OWNERSHIP
+
+   The Software is the sole and exclusive property of the Company. The
+   Software constitutes the confidential information and trade secrets of the
+   Company and is protected by United States copyright law, trade secret law,
+   international treaties, and other applicable intellectual property laws.
+   Title to the Software, and all intellectual property rights therein, remain
+   with the Company at all times. No transfer of ownership is granted or
+   implied by access to, or any use of, the Software.
+
+3. NO LICENSE GRANTED
+
+   No license, right, title, or interest in or to the Software is granted to
+   any party, whether by implication, estoppel, exhaustion, or otherwise,
+   except pursuant to a separate written agreement signed by an authorized
+   officer of the Company. Without limiting the generality of the foregoing,
+   no person or entity may, without the prior express written consent of the
+   Company:
+
+     (a) copy, reproduce, or duplicate the Software, in whole or in part;
+     (b) modify, adapt, translate, or create derivative works of the Software;
+     (c) distribute, publish, transmit, sublicense, sell, rent, lease, lend,
+         or otherwise transfer the Software;
+     (d) publicly display or publicly perform the Software;
+     (e) host, operate, or provide the Software as a service to any third
+         party;
+     (f) remove, alter, or obscure any proprietary notices, labels, or marks
+         on or in the Software;
+     (g) use the Software to train, fine-tune, or otherwise improve any
+         machine learning model, except as expressly authorized by the
+         Company; or
+     (h) use the Software in any manner that competes with the Company's
+         business.
+
+4. CONFIDENTIALITY
+
+   The Software, including its structure, sequence, organization, source
+   code, algorithms, models, prompts, data schemas, and underlying ideas,
+   constitutes the confidential information and trade secrets of the Company.
+   Each Authorized User shall:
+
+     (a) maintain the Software in strict confidence using at least the same
+         degree of care used to protect their own confidential information of
+         like importance, and in no event less than a reasonable degree of
+         care;
+     (b) use the Software solely for the purposes expressly authorized by the
+         Company in writing;
+     (c) limit access to the Software to those personnel who have a
+         demonstrable need to know and who are bound by written
+         confidentiality obligations no less protective than those set forth
+         herein; and
+     (d) not disclose, publish, or otherwise make available any portion of
+         the Software to any third party without the prior written consent of
+         the Company.
+
+   The confidentiality obligations herein survive any termination of access
+   to the Software and remain in effect in perpetuity with respect to trade
+   secrets and for a period of five (5) years with respect to all other
+   confidential information.
+
+5. NO REVERSE ENGINEERING
+
+   Except to the minimum extent expressly permitted by applicable law
+   notwithstanding this contractual prohibition, no party may reverse
+   engineer, decompile, disassemble, decrypt, extract, or otherwise attempt
+   to derive the source code, structure, algorithms, models, prompts, or
+   underlying ideas of any portion of the Software supplied in object,
+   compiled, or hosted form.
+
+6. DATA AND PARTICIPANT PRIVACY
+
+   The Software is designed to process audio and transcript data from
+   research participants who may not be parties to this license. Any use of
+   the Software must comply with all applicable privacy laws and regulations,
+   including but not limited to applicable U.S. state privacy laws, the
+   General Data Protection Regulation (GDPR) where applicable, and any
+   institutional review board (IRB) or research ethics requirements
+   governing the underlying research. Authorized Users are solely responsible
+   for obtaining all required participant consents prior to processing
+   recorded sessions through the Software.
+
+7. THIRD-PARTY COMPONENTS
+
+   The Software may incorporate third-party open-source components, each of
+   which is governed by its own license terms. Such third-party components
+   are identified in the repository's dependency manifests (e.g.,
+   package.json, pyproject.toml). Nothing in this License limits or modifies
+   the rights granted under any applicable third-party open-source license
+   with respect to those third-party components.
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF
+   ANY KIND, EXPRESS, IMPLIED, OR STATUTORY, INCLUDING BUT NOT LIMITED TO
+   THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+   PURPOSE, TITLE, ACCURACY, QUIET ENJOYMENT, AND NON-INFRINGEMENT. THE
+   COMPANY DOES NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED,
+   ERROR-FREE, SECURE, OR FREE OF HARMFUL COMPONENTS, OR THAT ANY DATA
+   PROCESSED THROUGH THE SOFTWARE WILL NOT BE LOST, ALTERED, OR CORRUPTED.
+
+9. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+   COMPANY, ITS AFFILIATES, OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, OR
+   LICENSORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER
+   IN AN ACTION OF CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY,
+   OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE
+   OR THE USE OR OTHER DEALINGS IN THE SOFTWARE, INCLUDING ANY DIRECT,
+   INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR PUNITIVE
+   DAMAGES (INCLUDING LOSS OF PROFITS, DATA, GOODWILL, OR BUSINESS
+   INTERRUPTION), EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+10. INDEMNIFICATION
+
+    Each Authorized User shall indemnify, defend, and hold harmless the
+    Company and its affiliates, officers, directors, employees, and agents
+    from and against any and all claims, damages, losses, liabilities, costs,
+    and expenses (including reasonable attorneys' fees) arising out of or
+    relating to such Authorized User's breach of this License or
+    unauthorized use of the Software.
+
+11. TERMINATION
+
+    Any right of access or use granted under a separate written agreement
+    with the Company terminates automatically and immediately upon any
+    breach of the terms of this License. The Company may also terminate
+    access at any time, with or without cause, by written notice. Upon any
+    termination, the Authorized User shall immediately cease all use of the
+    Software, destroy or return all copies of the Software in their
+    possession or control, and certify such destruction or return in writing
+    upon the Company's request. Sections 2, 4, 5, 6, 8, 9, 10, 11, 12, 13,
+    and 14 survive any termination of this License.
+
+12. EXPORT COMPLIANCE
+
+    The Software may be subject to United States export control laws and
+    regulations. Authorized Users shall comply with all applicable export
+    and re-export control laws and regulations, including the U.S. Export
+    Administration Regulations and sanctions administered by the U.S.
+    Department of the Treasury's Office of Foreign Assets Control.
+
+13. GOVERNING LAW AND JURISDICTION
+
+    This License shall be governed by and construed in accordance with the
+    laws of the State of Minnesota, United States of America, without regard
+    to its conflict of laws principles. Any dispute, controversy, or claim
+    arising out of or relating to this License, or the breach, termination,
+    or validity thereof, shall be subject to the exclusive jurisdiction of
+    the state and federal courts located in Hennepin County, Minnesota, and
+    each party irrevocably submits to the personal jurisdiction of, and
+    waives any objection to venue in, such courts.
+
+14. ENTIRE AGREEMENT; SEVERABILITY
+
+    This License, together with any separate written agreement between the
+    Company and an Authorized User governing access to the Software,
+    constitutes the entire agreement of the parties with respect to its
+    subject matter and supersedes all prior or contemporaneous
+    understandings. If any provision of this License is held to be invalid
+    or unenforceable, the remaining provisions shall continue in full force
+    and effect, and the invalid or unenforceable provision shall be modified
+    to the minimum extent necessary to render it valid and enforceable while
+    preserving the parties' intent.
+
+15. CONTACT
+
+    For licensing inquiries, requests for permission, or notice of any
+    matter under this License, contact:
+
+      Viral Ventures LLC
+      Maple Grove, Minnesota, USA
+
+================================================================================
+End of License.
+================================================================================

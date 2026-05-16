@@ -1,0 +1,6 @@
+# pnpm workspace layout — https://pnpm.io/pnpm-workspace_yaml
+# Engine lives at services/engine (Python, uv) and is intentionally NOT a pnpm workspace.
+
+packages:
+  - "apps/*"
+  - "packages/*"

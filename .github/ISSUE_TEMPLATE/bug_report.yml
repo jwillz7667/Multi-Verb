@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a bug in Verbio (engine, web, infra)
+title: "bug: <short description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. **Do not include real participant data, session audio, or transcripts** — use synthesized examples or session IDs only.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing what's wrong.
+      placeholder: "Moderator spoke twice in 10 seconds, violating the quietness budget."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: How to reproduce. Reference session IDs / decision IDs / tick IDs where possible.
+      placeholder: |
+        1. Start a session with default RulesConfig
+        2. Trigger silence_gap fire at tick 1023
+        3. Researcher issues `force_prompt` at tick 1025
+        4. Observe two utterances published within 4 seconds
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include any decision IDs / log excerpts (stripped of PII).
+    validations:
+      required: true
+
+  - type: input
+    id: session_id
+    attributes:
+      label: Session ID (if applicable)
+      description: UUID — helps us pull the decision trail.
+
+  - type: input
+    id: engine_sha
+    attributes:
+      label: Engine version (git SHA)
+
+  - type: input
+    id: web_sha
+    attributes:
+      label: Web version (git SHA)
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "S1 — production outage or data loss"
+        - "S2 — major feature broken, no workaround"
+        - "S3 — minor issue with workaround"
+        - "S4 — cosmetic / nice-to-have"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, related PRs / issues, hypotheses.

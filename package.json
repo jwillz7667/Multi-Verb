@@ -1,0 +1,65 @@
+{
+  "name": "verbio",
+  "version": "0.0.0",
+  "description": "Real-time AI moderator for multi-participant qualitative research sessions.",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Viral Ventures LLC <Maple Grove, MN, USA>",
+  "homepage": "https://github.com/jwillz7667/Multi-Verb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jwillz7667/Multi-Verb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jwillz7667/Multi-Verb/issues"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "test:e2e": "turbo run test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,md,yml,yaml}\" --ignore-path .prettierignore --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,md,yml,yaml}\" --ignore-path .prettierignore --ignore-path .gitignore",
+    "clean": "turbo run clean && rimraf node_modules \"**/node_modules\" \"**/.turbo\" \"**/dist\" \"**/.next\" \"**/coverage\"",
+    "shared-types:generate": "pnpm --filter @verbio/shared-types run generate",
+    "shared-types:check": "pnpm --filter @verbio/shared-types run check",
+    "commitlint": "commitlint --edit",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "lefthook": "^1.10.1",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": []
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+coverage/
+.vercel/
+
+# Lockfiles
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+uv.lock
+
+# Minified
+*.min.js
+*.min.css
+*.min.map
+
+# Python (handled by ruff)
+*.py
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.venv/
+
+# Generated artifacts
+**/generated/**
+*.generated.ts
+*.generated.tsx
+*.generated.py
+*.generated.json
+packages/shared-types/src/generated/
+
+# Documentation that should remain verbatim
+verbio-engineering-brief.md
+LICENSE
+
+# Alembic-generated SQL migrations should not be rewrapped
+infra/postgres/migrations/versions/*.py
+infra/postgres/migrations/versions/*.sql
+
+# Prisma schema is generated via `prisma db pull` and self-formatted by Prisma
+apps/web/prisma/schema.prisma

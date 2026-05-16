@@ -1,0 +1,109 @@
+version: 2
+
+updates:
+  # JavaScript / TypeScript — root pnpm workspace
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    versioning-strategy: "auto"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "javascript"
+    groups:
+      types:
+        patterns: ["@types/*"]
+      eslint:
+        patterns: ["eslint*", "@typescript-eslint/*", "typescript-eslint"]
+      prettier:
+        patterns: ["prettier*", "eslint-config-prettier"]
+      next:
+        patterns: ["next", "@next/*", "react", "react-dom", "@types/react*"]
+      testing:
+        patterns: ["vitest", "@vitest/*", "playwright", "@playwright/*"]
+      tooling:
+        patterns: ["turbo", "lefthook", "rimraf"]
+      anthropic:
+        patterns: ["@anthropic-ai/*"]
+      prisma:
+        patterns: ["prisma", "@prisma/*"]
+      auth:
+        patterns: ["@auth/*", "next-auth", "@auth/prisma-adapter", "@auth/core"]
+      email:
+        patterns: ["resend", "@react-email/*"]
+      storage:
+        patterns: ["@aws-sdk/*"]
+      livekit:
+        patterns: ["@livekit/*", "livekit-*"]
+
+  # Python — engine
+  - package-ecosystem: "pip"
+    directory: "/services/engine"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(engine)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      linting:
+        patterns: ["ruff", "mypy", "types-*"]
+      testing:
+        patterns: ["pytest*", "hypothesis", "coverage*"]
+      pydantic:
+        patterns: ["pydantic*"]
+      sqlalchemy:
+        patterns: ["sqlalchemy*", "asyncpg", "alembic"]
+      livekit:
+        patterns: ["livekit*"]
+      anthropic:
+        patterns: ["anthropic"]
+      observability:
+        patterns: ["opentelemetry-*", "sentry-sdk", "structlog"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Docker (engine) — activated once Dockerfile exists
+  - package-ecosystem: "docker"
+    directory: "/services/engine"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(engine)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"

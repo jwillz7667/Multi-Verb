@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a new capability for Verbio
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check that the feature is consistent with `verbio-engineering-brief.md`. If it diverges from the brief, propose a brief revision FIRST.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user / research scenario is currently underserved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: High-level approach. Sketch the smallest viable change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: brief_alignment
+    attributes:
+      label: Brief alignment
+      description: |
+        Does this fit §1 of the brief? In particular: does it preserve **bias toward silence** and **full auditability**? If it weakens either, explain why net positive.
+    validations:
+      required: true
+
+  - type: input
+    id: phase
+    attributes:
+      label: Target phase
+      description: Which brief §14 phase should this land in?
+      placeholder: "Phase 5 — Researcher controls"
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Explicitly out of scope
+      description: Anything this proposal is NOT asking for.

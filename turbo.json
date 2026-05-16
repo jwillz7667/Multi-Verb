@@ -1,0 +1,92 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalDependencies": [
+    "tsconfig.base.json",
+    ".env.example",
+    "package.json",
+    "pnpm-workspace.yaml"
+  ],
+  "globalEnv": [
+    "NODE_ENV",
+    "CI",
+    "TURBO_TELEMETRY_DISABLED"
+  ],
+  "globalPassThroughEnv": [
+    "PATH",
+    "HOME",
+    "SHELL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "dist/**",
+        "build/**",
+        "out/**",
+        "src/generated/**"
+      ],
+      "env": [
+        "NEXT_PUBLIC_*",
+        "SENTRY_*",
+        "OTEL_*"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": [
+        "NEXT_PUBLIC_*",
+        "DATABASE_URL",
+        "DATABASE_URL_POOLED",
+        "DATABASE_URL_ENGINE",
+        "REDIS_URL",
+        "REDIS_NAMESPACE",
+        "AUTH_*",
+        "RESEND_API_KEY",
+        "R2_*",
+        "LIVEKIT_*",
+        "ANTHROPIC_*",
+        "DEEPGRAM_*",
+        "CARTESIA_*",
+        "ELEVENLABS_*",
+        "SENTRY_*",
+        "OTEL_*",
+        "VERBIO_ENGINE_*"
+      ]
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": ["*.tsbuildinfo"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "test:watch": {
+      "cache": false,
+      "persistent": true
+    },
+    "test:e2e": {
+      "dependsOn": ["^build", "build"],
+      "outputs": ["playwright-report/**", "test-results/**"]
+    },
+    "generate": {
+      "dependsOn": ["^build"],
+      "outputs": ["src/generated/**", "dist/**"]
+    },
+    "check": {
+      "dependsOn": ["generate"],
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

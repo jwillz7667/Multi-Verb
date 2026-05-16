@@ -1,0 +1,57 @@
+# Lefthook — git hooks runner. https://lefthook.dev/
+# Installed by `pnpm install` via the `prepare` script (`lefthook install`).
+# Bypassing hooks with --no-verify is forbidden by team policy.
+
+assert_lefthook_installed: true
+
+pre-commit:
+  parallel: true
+  commands:
+    prettier:
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,md,mdx,yml,yaml}"
+      exclude: '(generated|^pnpm-lock\.yaml$|^uv\.lock$|^LICENSE$|verbio-engineering-brief\.md$)'
+      run: pnpm prettier --check {staged_files}
+
+    eslint:
+      glob: "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+      exclude: '(generated|\.config\.)'
+      run: pnpm eslint --max-warnings=0 {staged_files}
+
+    ruff-check:
+      glob: "services/engine/**/*.py"
+      run: cd services/engine && uv run ruff check {staged_files}
+
+    ruff-format:
+      glob: "services/engine/**/*.py"
+      run: cd services/engine && uv run ruff format --check {staged_files}
+
+    mypy-engine:
+      # Run on any engine py change. Strict mode is enforced by config.
+      glob: "services/engine/**/*.py"
+      run: cd services/engine && uv run mypy --strict verbio_engine
+
+    secret-scan:
+      # Catch obvious secrets before commit. Allowed patterns documented in .env.example.
+      run: |
+        if git diff --cached --name-only -z | xargs -0 grep -nE '(AKIA[0-9A-Z]{16}|sk-(ant|live|test)-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36})' 2>/dev/null; then
+          echo "❌ Possible secret detected in staged files. Remove or rotate, then re-stage." >&2
+          exit 1
+        fi
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm commitlint --edit {1}
+
+pre-push:
+  parallel: false
+  commands:
+    typecheck:
+      run: pnpm typecheck
+    engine-mypy:
+      run: cd services/engine && uv run mypy --strict verbio_engine
+
+# Skip these hooks in CI to avoid duplicate work (CI runs the same checks at the workflow level).
+skip_output:
+  - meta
+  - success
