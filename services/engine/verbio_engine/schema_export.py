@@ -25,6 +25,7 @@ from verbio_engine.domain import (
     ResearcherCommand,
     RuleEvaluation,
 )
+from verbio_engine.realtime import TranscriptEvent
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,6 +38,7 @@ EXPORTED_MODELS: tuple[tuple[str, type[BaseModel]], ...] = (
     ("rule_evaluation", RuleEvaluation),
     ("researcher_command", ResearcherCommand),
     ("quietness_budget", QuietnessBudget),
+    ("transcript_event", TranscriptEvent),
 )
 """Filename stem → model. Order is stable for deterministic CI output."""
 

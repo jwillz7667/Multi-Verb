@@ -32,6 +32,11 @@ from verbio_engine.agent.transcribe import TrackTranscriber
 from verbio_engine.config import load_settings
 from verbio_engine.logging import configure_logging, get_logger
 from verbio_engine.persistence import create_engine, create_session_factory
+from verbio_engine.realtime import (
+    EventPublisher,
+    NullEventPublisher,
+    RedisEventPublisher,
+)
 
 if TYPE_CHECKING:
     from livekit.agents import stt as agents_stt
@@ -79,8 +84,22 @@ async def _entrypoint_with_runtime(
     # per `.stream()` call, so one STT object can serve many tracks.
     stt = _build_stt(settings=settings, deepgram_key=deepgram_key)
 
+    # SSE fan-out target. When REDIS_URL isn't set (e.g., a smoke test
+    # without the full stack), the runtime publishes into the void —
+    # the audit trail is still complete in Postgres and the SSE route's
+    # backfill recovers anything missed.
+    publisher: EventPublisher = (
+        RedisEventPublisher(settings.redis_url.get_secret_value())
+        if settings.redis_url is not None
+        else NullEventPublisher()
+    )
+
     room: rtc.Room = ctx.room  # type: ignore[attr-defined]
-    runtime = SessionRuntime(session_factory=factory, room_name=room.name)
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room.name,
+        publisher=publisher,
+    )
 
     # Hold strong references to in-flight tasks so they don't get
     # garbage-collected mid-await; otherwise asyncio cancels them
@@ -133,9 +152,13 @@ async def _entrypoint_with_runtime(
     room.on("participant_disconnected", _on_participant_disconnected)
     room.on("track_subscribed", _on_track_subscribed)
 
-    # Flush session-end + dispose pool when LiveKit tears the job down.
+    # Flush session-end, close the SSE publisher, and dispose the DB
+    # pool when LiveKit tears the job down. Order matters: mark the
+    # session ended (audit trail) BEFORE closing the publisher so any
+    # post-disconnect events still try to fan out.
     async def _shutdown() -> None:
         await _safe(runtime.on_room_disconnected())
+        await _safe(publisher.aclose())
         await engine.dispose()
 
     ctx.add_shutdown_callback(_shutdown)  # type: ignore[attr-defined]

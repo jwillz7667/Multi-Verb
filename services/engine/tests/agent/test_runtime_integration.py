@@ -29,11 +29,27 @@ from verbio_engine.persistence import (
     UtteranceInsert,
     create_session_factory,
 )
+from verbio_engine.realtime import TranscriptEvent
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 RuntimeFactory = Callable[[str], SessionRuntime]
+
+
+class RecordingPublisher:
+    """In-memory EventPublisher double used by runtime integration tests."""
+
+    def __init__(self) -> None:
+        self.events: list[TranscriptEvent] = []
+        self.closed = False
+
+    async def publish(self, event: TranscriptEvent) -> int:
+        self.events.append(event)
+        return 1
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 @pytest.fixture
@@ -230,3 +246,126 @@ async def test_persist_utterance_writes_row(
     assert rows[0].participant_id == participant.id
     assert rows[0].is_final is True
     assert rows[0].confidence == pytest.approx(0.88)
+
+
+@pytest.mark.integration
+async def test_persist_utterance_publishes_event_with_speaker_metadata(
+    engine: AsyncEngine,
+) -> None:
+    """Persist-then-publish: the SSE envelope carries identity + display name.
+
+    The dashboard renders without re-joining to `participants`, so the
+    runtime is responsible for enriching each event with the speaker's
+    LiveKit identity and display name from the in-memory snapshot cache.
+    """
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    async with factory() as db, db.begin():
+        db.add(Session(livekit_room_name=room_name, status="scheduled"))
+
+    recorder = RecordingPublisher()
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room_name,
+        publisher=recorder,
+    )
+    await runtime.on_room_connected()
+    participant = await runtime.on_participant_joined(
+        ParticipantSnapshot(
+            identity="id-pub",
+            display_name="Publisher Test",
+            role="participant",
+        )
+    )
+
+    now = datetime.now(UTC)
+    await runtime.persist_utterance(
+        UtteranceInsert(
+            session_id=runtime.session_id,
+            participant_id=participant.id,
+            start_ts=now,
+            end_ts=now,
+            text="event payload",
+            confidence=0.77,
+            is_final=True,
+        )
+    )
+
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.type == "utterance"
+    assert event.session_id == runtime.session_id
+    assert event.payload.participant_identity == "id-pub"
+    assert event.payload.participant_display_name == "Publisher Test"
+    assert event.payload.text == "event payload"
+    assert event.payload.is_final is True
+    # The SSE event id is the utterance UUID (resolvable for backfill).
+    assert event.id == str(event.payload.utterance_id)
+
+
+@pytest.mark.integration
+async def test_persist_utterance_skips_publish_without_cached_snapshot(
+    engine: AsyncEngine,
+) -> None:
+    """Worker restart mid-session loses the snapshot cache; publish silently skips.
+
+    The audit-trail row is still written. The SSE backfill on the next
+    reconnect picks up the utterance, so the dashboard recovers without
+    a publish in this rare edge case.
+    """
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    async with factory() as db, db.begin():
+        sess = Session(livekit_room_name=room_name, status="scheduled")
+        db.add(sess)
+    # Pre-seed a participant row directly so the FK is satisfied but the
+    # in-memory snapshot cache stays empty (simulates worker restart).
+    async with factory() as db, db.begin():
+        sess_row = (
+            await db.execute(select(Session).where(Session.livekit_room_name == room_name))
+        ).scalar_one()
+        orphan = Participant(
+            session_id=sess_row.id,
+            display_name="Ghost",
+            role="participant",
+            livekit_identity="id-ghost",
+        )
+        db.add(orphan)
+
+    recorder = RecordingPublisher()
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room_name,
+        publisher=recorder,
+    )
+    await runtime.on_room_connected()
+
+    async with factory() as db:
+        orphan_row = (
+            await db.execute(
+                select(Participant).where(Participant.livekit_identity == "id-ghost"),
+            )
+        ).scalar_one()
+
+    now = datetime.now(UTC)
+    await runtime.persist_utterance(
+        UtteranceInsert(
+            session_id=runtime.session_id,
+            participant_id=orphan_row.id,
+            start_ts=now,
+            end_ts=now,
+            text="orphan utterance",
+            confidence=None,
+            is_final=True,
+        )
+    )
+
+    assert recorder.events == []
+    # Row still written.
+    async with factory() as db:
+        utterances = (
+            (await db.execute(select(Utterance).where(Utterance.session_id == runtime.session_id)))
+            .scalars()
+            .all()
+        )
+    assert [u.text for u in utterances] == ["orphan utterance"]

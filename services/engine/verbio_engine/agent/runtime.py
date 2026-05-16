@@ -25,17 +25,25 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
+from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
     ParticipantJoin,
     ParticipantRepo,
     SessionRepo,
     UtteranceRepo,
 )
+from verbio_engine.realtime import (
+    EventPublisher,
+    NullEventPublisher,
+    utterance_event,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from verbio_engine.persistence import Participant, Session, UtteranceInsert
+
+log = get_logger(__name__)
 
 
 # Mirrors `ParticipantRole` in persistence.models. We re-state the
@@ -111,6 +119,7 @@ class SessionRuntime:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         room_name: str,
+        publisher: EventPublisher | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
@@ -119,11 +128,19 @@ class SessionRuntime:
         # `on_participant_joined`; the audio pipeline consults this to
         # tag each utterance with the correct DB participant row.
         self._participant_ids: dict[str, uuid.UUID] = {}
+        # Reverse lookup (participant_id → snapshot) so the persist
+        # path can enrich the SSE event with the joiner's identity and
+        # display name without an extra DB roundtrip per utterance.
+        self._snapshot_by_pid: dict[uuid.UUID, ParticipantSnapshot] = {}
         # Per-identity asyncio.Event so a `track_subscribed` race that
         # fires before `participant_connected`'s upsert completes can
         # `await runtime.await_participant_id(identity)` instead of
         # busy-polling.
         self._participant_events: dict[str, asyncio.Event] = {}
+        # Defaulting to NullEventPublisher keeps unit tests trivial —
+        # they don't have to construct a Redis double when they don't
+        # care about realtime fan-out. Worker code injects the real one.
+        self._publisher: EventPublisher = publisher or NullEventPublisher()
 
     @property
     def session_id(self) -> uuid.UUID:
@@ -193,6 +210,7 @@ class SessionRuntime:
                 )
             )
         self._participant_ids[snapshot.identity] = row.id
+        self._snapshot_by_pid[row.id] = snapshot
         # Wake any track callback that's already awaiting this identity.
         self._participant_events.setdefault(snapshot.identity, asyncio.Event()).set()
         return row
@@ -204,16 +222,49 @@ class SessionRuntime:
             await repo.mark_left(self.session_id, identity)
 
     async def persist_utterance(self, record: UtteranceInsert) -> None:
-        """Write one STT-derived utterance row.
+        """Write one STT-derived utterance row, then fan out to Redis.
 
-        Called from the per-track transcriber tasks. Each insert is its
-        own short transaction so a slow write can't backpressure the
-        STT stream — the pool absorbs the concurrency (4 connections
-        per worker is the current ceiling; see worker.py).
+        Persistence-before-publish is intentional: the brief's audit
+        invariant is that no spoken artifact may exist without a
+        Postgres row, so the publish happens only after the row id is
+        in hand. The publish is best-effort — failure is logged inside
+        `EventPublisher.publish` and never propagates here.
+
+        Each insert is its own short transaction so a slow write can't
+        backpressure the STT stream — the pool absorbs the concurrency
+        (4 connections per worker is the current ceiling; see worker.py).
         """
         async with self._session_factory() as db, db.begin():
             repo = UtteranceRepo(db)
-            await repo.insert(record)
+            row = await repo.insert(record)
+
+        snapshot = self._snapshot_by_pid.get(record.participant_id)
+        if snapshot is None:
+            # The participant row exists (the insert FK would have failed
+            # otherwise) but the in-memory snapshot is missing — likely
+            # a worker restart mid-session. Skip the publish; the SSE
+            # backfill will surface the row on the next reconnect.
+            log.warning(
+                "runtime.publish_skipped_no_snapshot",
+                participant_id=str(record.participant_id),
+                utterance_id=str(row.id),
+            )
+            return
+
+        await self._publisher.publish(
+            utterance_event(
+                utterance_id=row.id,
+                session_id=record.session_id,
+                participant_id=record.participant_id,
+                participant_identity=snapshot.identity,
+                participant_display_name=snapshot.display_name,
+                text=record.text,
+                is_final=record.is_final,
+                confidence=record.confidence,
+                start_ts=record.start_ts,
+                end_ts=record.end_ts,
+            )
+        )
 
     async def on_room_disconnected(self) -> None:
         """Mark the session `ended` at room teardown."""

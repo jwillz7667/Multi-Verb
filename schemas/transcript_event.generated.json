@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "UtteranceEventPayload": {
+      "additionalProperties": false,
+      "description": "Snapshot of an utterance row at the moment it was persisted.\n\nSelf-contained — the dashboard renders without joining back to\nPostgres. `participant_identity` + `participant_display_name` are\ndenormalised so a single SSE message is enough to draw a row.",
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "end_ts": {
+          "format": "date-time",
+          "title": "End Ts",
+          "type": "string"
+        },
+        "is_final": {
+          "title": "Is Final",
+          "type": "boolean"
+        },
+        "participant_display_name": {
+          "minLength": 1,
+          "title": "Participant Display Name",
+          "type": "string"
+        },
+        "participant_id": {
+          "format": "uuid",
+          "title": "Participant Id",
+          "type": "string"
+        },
+        "participant_identity": {
+          "minLength": 1,
+          "title": "Participant Identity",
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "start_ts": {
+          "format": "date-time",
+          "title": "Start Ts",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "utterance_id": {
+          "format": "uuid",
+          "title": "Utterance Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "utterance_id",
+        "session_id",
+        "participant_id",
+        "participant_identity",
+        "participant_display_name",
+        "text",
+        "is_final",
+        "start_ts",
+        "end_ts"
+      ],
+      "title": "UtteranceEventPayload",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Envelope published to `verbio:events:{session_id}` for SSE fan-out.\n\nPhase 1 always has `type=\"utterance\"`. The literal-narrowed union\ngrows when Phase 3 introduces decision and state-snapshot events;\nweb's discriminated parser then expands accordingly.\n\n`id` is the SSE event id — clients echo it back as `Last-Event-ID`\non reconnect, and the web SSE route uses it to skip already-seen\nrows during the Postgres backfill. For utterance events we use the\nutterance UUID directly; it's globally unique and resolvable to a\nrow for the backfill cursor.\n\n`ts` is the server-side moment the event was created (not the\nutterance's start_ts), used purely for diagnostics — ordering is by\npayload start_ts on backfill.",
+  "properties": {
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "payload": {
+      "$ref": "#/$defs/UtteranceEventPayload"
+    },
+    "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "title": "Ts",
+      "type": "string"
+    },
+    "type": {
+      "const": "utterance",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "session_id",
+    "ts",
+    "payload"
+  ],
+  "title": "TranscriptEvent",
+  "type": "object"
+}

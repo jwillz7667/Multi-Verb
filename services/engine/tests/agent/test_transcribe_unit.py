@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
+from livekit.agents.language import LanguageCode
 from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
 
 from verbio_engine.agent.transcribe import TrackTranscriber, _speech_event_to_utterance
@@ -49,7 +50,7 @@ def _mk_event(
         if alternatives is not None
         else [
             SpeechData(
-                language="en-US",
+                language=LanguageCode("en-US"),
                 text=text,
                 start_time=start_time,
                 end_time=end_time,

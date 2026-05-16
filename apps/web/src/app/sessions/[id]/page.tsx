@@ -18,6 +18,7 @@ import { findSessionById } from '@/features/sessions';
 import { auth } from '@/lib/auth';
 import { clientEnv } from '@/lib/env';
 
+import { LiveTranscript } from './live-transcript';
 import { SessionLifecycleControls } from './session-controls';
 
 export const dynamic = 'force-dynamic';
@@ -83,6 +84,8 @@ export default async function SessionDetailPage({
           inviteUrl={inviteUrl}
           initialStatus={session.status}
         />
+
+        <LiveTranscript sessionId={session.id} />
       </div>
     </main>
   );

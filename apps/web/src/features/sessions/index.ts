@@ -13,8 +13,10 @@ export {
   SessionNotFoundError,
   startSession,
 } from './service';
-export { findSessionById, listRecentSessions } from './repo';
-export type { ModeratedSessionRow } from './repo';
+export { findSessionById, listRecentSessions, listUtterancesSince } from './repo';
+export type { ModeratedSessionRow, UtteranceWithSpeakerRow } from './repo';
+export { parseTranscriptEvent, transcriptEventSchema } from './events';
+export type { TranscriptEventInput, TranscriptEventValidated } from './events';
 export {
   CreateSessionInputSchema,
   MintTokenInputSchema,
