@@ -29,7 +29,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // modules (repo, service), so a client component cannot import the
 // barrel. The `events` module is pure schema + parser and is safe in
 // the browser.
-import { parseTranscriptEvent, type TranscriptEventValidated } from '@/features/sessions/events';
+import { parseTranscriptEvent, type UtteranceTranscriptEvent } from '@/features/sessions/events';
 
 interface Props {
   sessionId: string;
@@ -62,7 +62,11 @@ export function LiveTranscript({ sessionId }: Props): React.ReactElement {
 
     const onUtterance = (raw: MessageEvent<string>): void => {
       const parsed = parseTranscriptEvent(safeJsonParse(raw.data));
-      if (parsed === null) return;
+      // The SSE channel routes `state_snapshot` envelopes to a separate
+      // listener; we still defensively narrow in case a stray message
+      // is mis-routed (e.g., during a redeploy where the route is
+      // forwarding everything as `utterance`).
+      if (parsed?.type !== 'utterance') return;
       setUtterances((prev) => mergeUtterance(prev, toDisplay(parsed)));
     };
 
@@ -149,7 +153,7 @@ export function LiveTranscript({ sessionId }: Props): React.ReactElement {
   );
 }
 
-function toDisplay(event: TranscriptEventValidated): DisplayUtterance {
+function toDisplay(event: UtteranceTranscriptEvent): DisplayUtterance {
   return {
     id: event.payload.utterance_id,
     participantId: event.payload.participant_id,

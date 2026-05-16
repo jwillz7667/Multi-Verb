@@ -13,10 +13,20 @@ export {
   SessionNotFoundError,
   startSession,
 } from './service';
-export { findSessionById, listRecentSessions, listUtterancesSince } from './repo';
-export type { ModeratedSessionRow, UtteranceWithSpeakerRow } from './repo';
+export {
+  findSessionById,
+  listRecentSessions,
+  listStateSnapshotsSince,
+  listUtterancesSince,
+} from './repo';
+export type { ModeratedSessionRow, StateSnapshotRow, UtteranceWithSpeakerRow } from './repo';
 export { parseTranscriptEvent, transcriptEventSchema } from './events';
-export type { TranscriptEventInput, TranscriptEventValidated } from './events';
+export type {
+  StateSnapshotTranscriptEvent,
+  TranscriptEventInput,
+  TranscriptEventValidated,
+  UtteranceTranscriptEvent,
+} from './events';
 export {
   CreateSessionInputSchema,
   MintTokenInputSchema,

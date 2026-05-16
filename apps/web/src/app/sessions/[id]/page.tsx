@@ -19,6 +19,7 @@ import { auth } from '@/lib/auth';
 import { clientEnv } from '@/lib/env';
 
 import { LiveTranscript } from './live-transcript';
+import { ParticipantTiles } from './participant-tiles';
 import { SessionLifecycleControls } from './session-controls';
 
 export const dynamic = 'force-dynamic';
@@ -85,6 +86,7 @@ export default async function SessionDetailPage({
           initialStatus={session.status}
         />
 
+        <ParticipantTiles sessionId={session.id} />
         <LiveTranscript sessionId={session.id} />
       </div>
     </main>

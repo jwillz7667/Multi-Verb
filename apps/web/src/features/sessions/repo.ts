@@ -151,6 +151,90 @@ interface BackfillOptions {
  * brief disconnect mid-session, small enough that a misbehaving
  * client can't sweep an entire 60-min session in one request.
  */
+export interface StateSnapshotRow {
+  id: string;
+  sessionId: string;
+  tickId: bigint;
+  ts: Date;
+  state: unknown;
+}
+
+interface SnapshotBackfillOptions {
+  afterSnapshotId?: string;
+  limit?: number;
+}
+
+/**
+ * Backfill `state_snapshots` since the SSE `Last-Event-ID` cursor.
+ *
+ * The engine writes one snapshot per tick (2 Hz → 7200 rows/hour); a
+ * brief disconnect can leave the dashboard several ticks behind. On
+ * reconnect the client sends the last snapshot envelope id as
+ * `Last-Event-ID`; we resolve it to its `(tickId, id)` cursor and
+ * return every snapshot that followed in stable order.
+ *
+ * `(tick_id, id)` is the replay key. Ties on tick_id (rare — the
+ * engine is single-writer per session) are broken by row id for a
+ * deterministic order matching the live publish order. The query is
+ * served by `ix_state_snapshots_session_id_tick_id`.
+ *
+ * `limit` defaults to 240 — 2 minutes of ticks at 2 Hz. That's enough
+ * to cover a tab-resume after a short suspend without flooding the
+ * dashboard with stale frames on long disconnects (clients re-paint
+ * from the freshest snapshot anyway). Caller can override for testing.
+ */
+export async function listStateSnapshotsSince(
+  sessionId: string,
+  options: SnapshotBackfillOptions = {},
+): Promise<StateSnapshotRow[]> {
+  const limit = options.limit ?? 240;
+
+  let cursorTickId: bigint | null = null;
+  let cursorId: string | null = null;
+  if (options.afterSnapshotId !== undefined) {
+    const cursor = await db.stateSnapshot.findUnique({
+      where: { id: options.afterSnapshotId },
+      select: { id: true, tickId: true, sessionId: true },
+    });
+    // Cross-session cursor smuggling: silently drop, never bleed rows.
+    if (cursor !== null && cursor.sessionId === sessionId) {
+      cursorTickId = cursor.tickId;
+      cursorId = cursor.id;
+    }
+  }
+
+  const rows = await db.stateSnapshot.findMany({
+    where: {
+      sessionId,
+      ...(cursorTickId !== null && cursorId !== null
+        ? {
+            OR: [
+              { tickId: { gt: cursorTickId } },
+              { AND: [{ tickId: cursorTickId }, { id: { gt: cursorId } }] },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ tickId: 'asc' }, { id: 'asc' }],
+    take: limit,
+    select: {
+      id: true,
+      sessionId: true,
+      tickId: true,
+      ts: true,
+      state: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    state: row.state,
+  }));
+}
+
 export async function listUtterancesSince(
   sessionId: string,
   options: BackfillOptions = {},
