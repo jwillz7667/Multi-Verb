@@ -20,6 +20,7 @@ from verbio_engine.rules.registry import (
     RulesRegistry,
     UnknownRuleError,
 )
+from verbio_engine.rules.resolver import ResolverOutput, resolve
 from verbio_engine.rules.silence_gap import SilenceGapConfig, SilenceGapRule
 from verbio_engine.rules.speaker_imbalance import (
     SpeakerImbalanceConfig,
@@ -34,6 +35,7 @@ __all__ = [
     "CrossTalkPatternConfig",
     "CrossTalkPatternRule",
     "DuplicateRuleError",
+    "ResolverOutput",
     "Rule",
     "RulePredicateResult",
     "RulesRegistry",
@@ -44,4 +46,5 @@ __all__ = [
     "UnheardParticipantConfig",
     "UnheardParticipantRule",
     "UnknownRuleError",
+    "resolve",
 ]
