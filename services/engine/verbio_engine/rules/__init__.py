@@ -10,17 +10,32 @@ barrel — direct cross-module imports between rules are forbidden so
 the registry remains the single composition point.
 """
 
+from verbio_engine.rules.cross_talk_pattern import (
+    CrossTalkPatternConfig,
+    CrossTalkPatternRule,
+)
 from verbio_engine.rules.protocol import Rule, RulePredicateResult
 from verbio_engine.rules.registry import (
     DuplicateRuleError,
     RulesRegistry,
     UnknownRuleError,
 )
+from verbio_engine.rules.silence_gap import SilenceGapConfig, SilenceGapRule
+from verbio_engine.rules.unheard_participant import (
+    UnheardParticipantConfig,
+    UnheardParticipantRule,
+)
 
 __all__ = [
+    "CrossTalkPatternConfig",
+    "CrossTalkPatternRule",
     "DuplicateRuleError",
     "Rule",
     "RulePredicateResult",
     "RulesRegistry",
+    "SilenceGapConfig",
+    "SilenceGapRule",
+    "UnheardParticipantConfig",
+    "UnheardParticipantRule",
     "UnknownRuleError",
 ]
