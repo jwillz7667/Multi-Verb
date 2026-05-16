@@ -1,0 +1,35 @@
+{
+  "name": "@verbio/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared ESLint flat-config presets for the Verbio monorepo (base TS, Next.js, Node).",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "exports": {
+    "./base": "./base.mjs",
+    "./next": "./next.mjs",
+    "./node": "./node.mjs"
+  },
+  "files": ["base.mjs", "next.mjs", "node.mjs", "README.md"],
+  "scripts": {
+    "lint": "echo 'eslint-config: no lint (config files only)'",
+    "typecheck": "echo 'eslint-config: no typecheck (no .ts files)'",
+    "test": "echo 'eslint-config: no tests (consumed by other packages, validated transitively)'",
+    "clean": "echo 'eslint-config: nothing to clean'"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.18.0",
+    "@next/eslint-plugin-next": "^15.1.4",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.4",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "typescript-eslint": "^8.20.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0",
+    "typescript": "^5.0.0"
+  }
+}
