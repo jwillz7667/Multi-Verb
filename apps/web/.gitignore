@@ -9,6 +9,10 @@
 /build
 /dist
 
+# auto-generated Prisma client (rebuilt by `pnpm db:generate` /
+# `prisma generate` during `postinstall` and `build`)
+/src/generated/
+
 # misc
 .DS_Store
 *.pem

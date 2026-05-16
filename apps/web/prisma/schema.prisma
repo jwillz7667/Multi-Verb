@@ -1,0 +1,90 @@
+// Verbio web — Prisma schema.
+//
+// Alembic (services/engine/, infra/postgres/migrations/) is the
+// authoritative DDL source for the Railway Postgres database. This
+// file is the introspected mirror that Prisma needs to generate a
+// typed client for the Next.js app.
+//
+// To refresh it after an Alembic migration changes the schema:
+//   pnpm --filter @verbio/web db:pull
+//
+// The starter contents below are the Auth.js v5 tables that the app
+// needs to authenticate; they match the shapes created by
+// infra/postgres/migrations/versions/*_auth_js_tables.py.
+
+// Generate into src/ so pnpm's strict node_modules symlinking doesn't
+// hide the client (Prisma's default `.prisma/client` location lives
+// inside the @prisma/client package's resolved directory, which under
+// pnpm is the .pnpm store — TS can't resolve `.prisma/client/default`
+// from there). The output path is gitignored.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_POOLED")
+  directUrl = env("DATABASE_URL_DIRECT")
+}
+
+// ============================================================================
+// Auth.js v5 (next-auth) — Postgres adapter shapes.
+// https://authjs.dev/getting-started/adapters/prisma
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts Account[]
+  sessions Session[]
+
+  @@map("users")
+}
+
+model Account {
+  id                       String  @id @default(cuid())
+  userId                   String  @map("user_id")
+  type                     String
+  provider                 String
+  providerAccountId        String  @map("provider_account_id")
+  refresh_token            String?
+  access_token             String?
+  expires_at               Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String?
+  session_state            String?
+  refresh_token_expires_in Int?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
