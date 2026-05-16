@@ -54,6 +54,8 @@ in step.
 | Single test                     | `uv run pytest tests/domain/test_models.py::test_participant_state_minimal_construction` |
 | Export JSON Schemas             | `uv run verbio-export-schemas`                         |
 | Check JSON Schemas are in sync  | `uv run verbio-export-schemas --check`                 |
+| Apply DB migrations             | `DATABASE_URL_DIRECT=… uv run alembic upgrade head`    |
+| Show current revision           | `DATABASE_URL_DIRECT=… uv run alembic current`         |
 | Build container                 | `docker build -t verbio-engine .`                      |
 
 ## How shared types stay in sync

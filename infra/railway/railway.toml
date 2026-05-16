@@ -1,0 +1,48 @@
+# Railway service config for verbio-engine.
+#
+# Railway hosts the engine, Postgres, and Redis. The web tier is on
+# Vercel (see vercel.json at the repo root or apps/web). Cross-vendor
+# traffic uses pgBouncer transaction mode (port 6543) and rediss://
+# with TLS so the connection storm risk from cold serverless lambdas
+# stays bounded.
+#
+# This file describes a *single* Railway service: verbio-engine.
+# Postgres and Redis are provisioned via Railway's "Add Plugin" UI
+# (no Toml needed); their connection strings flow into the engine
+# via DATABASE_URL_ENGINE and REDIS_URL service references.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "services/engine/Dockerfile"
+# Build context is the repo root so the Dockerfile can COPY shared
+# artifacts (schemas/, packages/shared-types if needed for tests).
+buildCommand = ""
+
+[deploy]
+startCommand = "uvicorn verbio_engine.main:app --host 0.0.0.0 --port $PORT --workers 1"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1
+
+# Each Railway environment (preview/staging/production) gets its own
+# env-var set in the dashboard. The defaults below are placeholders;
+# real values live in Railway's "Variables" panel.
+#
+# Required (set in dashboard, never here):
+#   - DATABASE_URL_ENGINE   — service reference: ${{ Postgres.DATABASE_URL }}
+#   - REDIS_URL             — service reference: ${{ Redis.REDIS_URL }}
+#   - ADMIN_TOKEN           — shared with web's ENGINE_ADMIN_TOKEN
+#   - LIVEKIT_API_KEY       — from LiveKit Cloud
+#   - LIVEKIT_API_SECRET    — from LiveKit Cloud
+#   - LIVEKIT_URL           — wss://your-instance.livekit.cloud
+#   - DEEPGRAM_API_KEY      — STT (Phase 2+)
+#   - ANTHROPIC_API_KEY     — mouth LLM (Phase 4+)
+#   - CARTESIA_API_KEY      — TTS (Phase 4+)
+
+[environments.production.deploy]
+region = "us-east1"
+
+[environments.staging.deploy]
+region = "us-east1"

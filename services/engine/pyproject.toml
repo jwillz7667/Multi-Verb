@@ -9,14 +9,22 @@ authors = [{ name = "Viral Ventures LLC", email = "engineering@viralventures.dev
 keywords = ["livekit", "qualitative-research", "moderator", "fastapi"]
 
 # Runtime dependencies — kept lean for Phase 0. LiveKit Agents, Deepgram,
-# Anthropic, Cartesia, ElevenLabs, SQLAlchemy, asyncpg, redis-py are added
-# in the phase that first uses them (see brief §14).
+# Anthropic, Cartesia, ElevenLabs, asyncpg, redis-py are added in the
+# phase that first uses them (see brief §14).
+#
+# Alembic + SQLAlchemy + psycopg2-binary land in Phase 0 because the
+# first migration (`_health` table) is part of the Phase 0 done-when.
+# asyncpg ships when the request path needs it (Phase 1+); the Alembic
+# CLI uses the sync psycopg2 driver per the standard pattern.
 dependencies = [
   "fastapi>=0.115.0,<0.116",
   "uvicorn[standard]>=0.32.0,<0.35",
   "pydantic>=2.10.0,<3",
   "pydantic-settings>=2.6.0,<3",
   "structlog>=24.4.0,<25",
+  "alembic>=1.14.0,<2",
+  "sqlalchemy>=2.0.36,<3",
+  "psycopg2-binary>=2.9.10,<3",
 ]
 
 [project.optional-dependencies]

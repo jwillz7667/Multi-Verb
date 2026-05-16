@@ -1,0 +1,45 @@
+{
+  "$schema": "https://developers.cloudflare.com/r2/api/s3/lifecycle/schema.json",
+  "Rules": [
+    {
+      "ID": "expire-incomplete-multipart-uploads",
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    },
+    {
+      "ID": "transition-recordings-to-cold-storage",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "recordings/"
+      },
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "INFREQUENT_ACCESS"
+        }
+      ]
+    },
+    {
+      "ID": "expire-recordings-after-retention-window",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "recordings/"
+      },
+      "Expiration": {
+        "Days": 730
+      }
+    },
+    {
+      "ID": "expire-exports-after-90-days",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "exports/"
+      },
+      "Expiration": {
+        "Days": 90
+      }
+    }
+  ]
+}

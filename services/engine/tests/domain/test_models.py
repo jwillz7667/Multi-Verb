@@ -34,7 +34,10 @@ def _now() -> datetime:
 
 
 def test_participant_state_minimal_construction() -> None:
-    state = ParticipantState(
+    # `recent_utterances` and `flags` have factory defaults declared via
+    # Field(default_factory=...); pydantic accepts the call at runtime but
+    # the pydantic-mypy plugin under init_forbid_extra still flags it.
+    state = ParticipantState(  # type: ignore[call-arg]
         participant_id="p-1",
         display_name="Alex",
         joined_at=_now(),
@@ -48,7 +51,7 @@ def test_participant_state_minimal_construction() -> None:
 
 def test_participant_state_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError) as excinfo:
-        ParticipantState(
+        ParticipantState(  # type: ignore[call-arg]
             participant_id="p-1",
             display_name="Alex",
             joined_at=_now(),
@@ -58,7 +61,7 @@ def test_participant_state_rejects_extra_fields() -> None:
 
 
 def test_participant_state_is_frozen() -> None:
-    state = ParticipantState(
+    state = ParticipantState(  # type: ignore[call-arg]
         participant_id="p-1",
         display_name="Alex",
         joined_at=_now(),
@@ -89,7 +92,7 @@ def test_recent_utterances_capped_at_five() -> None:
 
 def test_fair_share_pct_must_be_within_0_to_100() -> None:
     with pytest.raises(ValidationError):
-        ParticipantState(
+        ParticipantState(  # type: ignore[call-arg]
             participant_id="p-1",
             display_name="Alex",
             joined_at=_now(),
@@ -104,7 +107,7 @@ def test_fair_share_pct_must_be_within_0_to_100() -> None:
 
 def test_moderator_decision_requires_cooldown_until() -> None:
     with pytest.raises(ValidationError):
-        ModeratorDecision(
+        ModeratorDecision(  # type: ignore[call-arg]
             decision_id=uuid4(),
             session_id=uuid4(),
             tick_id=0,
