@@ -156,3 +156,9 @@ recordings/
 *.local
 .tool-versions.local
 .direnv/
+
+# -----------------------------------------------------------------------------
+# Design handoff archive — the extracted folder is committed for reference;
+# the .zip itself is redundant and only kept locally when newly delivered.
+# -----------------------------------------------------------------------------
+MultiVerb-handoff.zip
