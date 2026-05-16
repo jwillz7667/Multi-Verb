@@ -77,8 +77,12 @@ def upgrade() -> None:
     )
     op.create_index("accounts_user_id_idx", "accounts", ["user_id"])
 
+    # `auth_sessions` (not `sessions`) so the Auth.js adapter table doesn't
+    # collide with the domain `sessions` table introduced in migration 0003
+    # (brief §10.1 — moderated sessions). Prisma's @@map redirects the
+    # `Session` model to this table; next-auth never sees the new name.
     op.create_table(
-        "sessions",
+        "auth_sessions",
         sa.Column("id", sa.Text(), primary_key=True),
         sa.Column("session_token", sa.Text(), nullable=False, unique=True),
         sa.Column(
@@ -89,7 +93,7 @@ def upgrade() -> None:
         ),
         sa.Column("expires", sa.TIMESTAMP(timezone=True), nullable=False),
     )
-    op.create_index("sessions_user_id_idx", "sessions", ["user_id"])
+    op.create_index("auth_sessions_user_id_idx", "auth_sessions", ["user_id"])
 
     op.create_table(
         "verification_tokens",
@@ -106,8 +110,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("verification_tokens")
-    op.drop_index("sessions_user_id_idx", table_name="sessions")
-    op.drop_table("sessions")
+    op.drop_index("auth_sessions_user_id_idx", table_name="auth_sessions")
+    op.drop_table("auth_sessions")
     op.drop_index("accounts_user_id_idx", table_name="accounts")
     op.drop_table("accounts")
     op.drop_table("users")

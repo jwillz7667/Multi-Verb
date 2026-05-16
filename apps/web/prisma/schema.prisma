@@ -69,6 +69,9 @@ model Account {
   @@map("accounts")
 }
 
+// Mapped to `auth_sessions` (not `sessions`) so the next-auth adapter
+// table doesn't collide with the domain `sessions` table that Alembic
+// migration 0003 introduces (brief §10.1 — moderated sessions).
 model Session {
   id           String   @id @default(cuid())
   sessionToken String   @unique @map("session_token")
@@ -77,7 +80,7 @@ model Session {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("sessions")
+  @@map("auth_sessions")
 }
 
 model VerificationToken {
