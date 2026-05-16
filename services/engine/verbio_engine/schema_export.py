@@ -26,6 +26,7 @@ from verbio_engine.domain import (
     QuietnessBudget,
     ResearcherCommand,
     RuleEvaluation,
+    RulesConfig,
     SessionState,
 )
 from verbio_engine.realtime import TranscriptEvent, TranscriptEventAdapter
@@ -49,6 +50,7 @@ EXPORTED_MODELS: tuple[tuple[str, str, _Schemable], ...] = cast(
         ("session_state", "SessionState", SessionState),
         ("moderator_decision", "ModeratorDecision", ModeratorDecision),
         ("rule_evaluation", "RuleEvaluation", RuleEvaluation),
+        ("rules_config", "RulesConfig", RulesConfig),
         ("researcher_command", "ResearcherCommand", ResearcherCommand),
         ("quietness_budget", "QuietnessBudget", QuietnessBudget),
         # TranscriptEvent is a discriminated union (TypeAlias), so its schema

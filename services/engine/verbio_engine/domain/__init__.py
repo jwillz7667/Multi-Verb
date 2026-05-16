@@ -19,6 +19,7 @@ from verbio_engine.domain.participant import (
     ParticipantState,
     UtteranceRef,
 )
+from verbio_engine.domain.rules_config import RulesConfig
 from verbio_engine.domain.session_state import SessionState
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "ResearcherCommand",
     "ResearcherCommandType",
     "RuleEvaluation",
+    "RulesConfig",
     "SessionState",
     "UtteranceRef",
 ]

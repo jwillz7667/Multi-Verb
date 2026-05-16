@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "description": "Frozen bundle of rule configurations for one session.\n\nStored verbatim inside `sessions.config_snapshot` (alongside the\npersona, retention policy, etc.) so a replay can reconstitute the\nrule set without re-reading the study row, which may have been\nedited since.",
+  "properties": {
+    "rules": {
+      "additionalProperties": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "description": "Per-rule overrides keyed by `rule.name`. Each value is a plain dict that the corresponding rule class parses into its own typed config. Missing entries mean 'use rule defaults'.",
+      "title": "Rules",
+      "type": "object"
+    },
+    "rules_version": {
+      "description": "Stable identifier for the rule-set release this session uses (e.g. 'v1.0'). The registry refuses sessions whose version it does not know about.",
+      "minLength": 1,
+      "title": "Rules Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "rules_version"
+  ],
+  "title": "RulesConfig",
+  "type": "object"
+}

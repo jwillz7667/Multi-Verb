@@ -8,5 +8,6 @@ export type { ParticipantState } from './participant-state.js';
 export type { QuietnessBudget } from './quietness-budget.js';
 export type { ResearcherCommand } from './researcher-command.js';
 export type { RuleEvaluation } from './rule-evaluation.js';
+export type { RulesConfig } from './rules-config.js';
 export type { SessionState } from './session-state.js';
 export type { TranscriptEvent } from './transcript-event.js';
