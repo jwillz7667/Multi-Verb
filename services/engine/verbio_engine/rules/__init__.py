@@ -26,6 +26,7 @@ from verbio_engine.rules.speaker_imbalance import (
     SpeakerImbalanceConfig,
     SpeakerImbalanceRule,
 )
+from verbio_engine.rules.topic_drift import TopicDriftConfig, TopicDriftRule
 from verbio_engine.rules.unheard_participant import (
     UnheardParticipantConfig,
     UnheardParticipantRule,
@@ -43,6 +44,8 @@ __all__ = [
     "SilenceGapRule",
     "SpeakerImbalanceConfig",
     "SpeakerImbalanceRule",
+    "TopicDriftConfig",
+    "TopicDriftRule",
     "UnheardParticipantConfig",
     "UnheardParticipantRule",
     "UnknownRuleError",

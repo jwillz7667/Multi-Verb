@@ -98,6 +98,10 @@ def make_session_state(
     is_paused: bool = False,
     moderator_muted: bool = False,
     quietness_budget: QuietnessBudget | None = None,
+    study_prompt: str = "",
+    study_prompt_embedding: list[float] | None = None,
+    rolling_transcript_30s_embedding: list[float] | None = None,
+    embedding_model_name: str | None = None,
 ) -> SessionState:
     """Build a `SessionState` with rule-test-friendly defaults.
 
@@ -123,4 +127,8 @@ def make_session_state(
         is_paused=is_paused,
         moderator_muted=moderator_muted,
         quietness_budget=quietness_budget if quietness_budget is not None else QuietnessBudget(),
+        study_prompt=study_prompt,
+        study_prompt_embedding=study_prompt_embedding,
+        rolling_transcript_30s_embedding=rolling_transcript_30s_embedding,
+        embedding_model_name=embedding_model_name,
     )

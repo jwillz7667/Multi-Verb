@@ -77,6 +77,38 @@ class SessionState(BaseModel):
         "newest last. Used by `topic_drift` and `stalled_thread`.",
     )
 
+    # ----- Study context + embeddings (populated by state store) -----------
+    # Embeddings live as plain lists for Pydantic / JSON round-trip during
+    # replay. The state store calls the EmbeddingProvider on study load
+    # (for `study_prompt_embedding`) and on every rolling-transcript
+    # refresh (for `rolling_transcript_30s_embedding`). Rules consume them
+    # as pure data — predicates never call out to a provider themselves.
+    study_prompt: str = Field(
+        default="",
+        description="The researcher's framing prompt for this study; embedded "
+        "once at session load and reused for similarity comparisons.",
+    )
+    study_prompt_embedding: list[float] | None = Field(
+        default=None,
+        description="Vector representation of `study_prompt`. None until the "
+        "state store has run the embedding call; rules MUST handle the "
+        "None case (typically: don't fire) so a transient provider outage "
+        "doesn't fabricate false positives.",
+    )
+    rolling_transcript_30s_embedding: list[float] | None = Field(
+        default=None,
+        description="Vector of the last ~30s of group transcript. Refreshed "
+        "by the state store on each speech-finalization event; lags the "
+        "raw transcript field by one embed round-trip. None until enough "
+        "transcript has accumulated to embed.",
+    )
+    embedding_model_name: str | None = Field(
+        default=None,
+        description="Model identifier that produced both embeddings on this "
+        "snapshot. Persisted into state snapshots so replay can refuse a "
+        "cross-model comparison.",
+    )
+
     # ----- Researcher-controlled levers (Phase 5; defaulted now so rules can read safely) -
     is_paused: bool = Field(
         default=False,
