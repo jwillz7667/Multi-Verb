@@ -67,6 +67,12 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          # Build-only escape hatch: env.ts validates at module init,
+          # and `next build` imports every route handler (including
+          # auth) to collect page data. Skipping validation here keeps
+          # the build green without weakening runtime guarantees.
+          SKIP_ENV_VALIDATION: "1"
         run: pnpm build
 
   # =========================================================================

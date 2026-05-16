@@ -12,8 +12,10 @@
  *   - `serverEnv` — full secret-bearing env, only safe in server code.
  *   - `clientEnv` — `NEXT_PUBLIC_*` only, safe to ship to the browser.
  *
- * Importing `serverEnv` from a Client Component is blocked at runtime
- * by the `server-only` package below.
+ * `SKIP_ENV_VALIDATION=1` bypasses validation entirely. Set it only
+ * for `next build` in CI / Docker builds, where Next imports every
+ * route handler to collect page data and would otherwise fail on
+ * missing production secrets. Never set it for runtime processes.
  */
 
 import { z } from 'zod';
@@ -122,8 +124,16 @@ function readClientEnv(): ClientEnv {
 }
 
 const isServer = typeof window === 'undefined';
+const skipValidation = process.env['SKIP_ENV_VALIDATION'] === '1';
 
-export const env: ServerEnv | ClientEnv = isServer ? readServerEnv() : readClientEnv();
+function buildEnv(): ServerEnv | ClientEnv {
+  if (skipValidation) {
+    return process.env as unknown as ServerEnv;
+  }
+  return isServer ? readServerEnv() : readClientEnv();
+}
+
+export const env: ServerEnv | ClientEnv = buildEnv();
 
 export const serverEnv: ServerEnv | null = isServer ? (env as ServerEnv) : null;
 export const clientEnv: ClientEnv = env;

@@ -20,7 +20,7 @@
         "out/**",
         "src/generated/**"
       ],
-      "env": ["NEXT_PUBLIC_*", "SENTRY_*", "OTEL_*"]
+      "env": ["NEXT_PUBLIC_*", "SENTRY_*", "OTEL_*", "SKIP_ENV_VALIDATION"]
     },
     "dev": {
       "cache": false,
