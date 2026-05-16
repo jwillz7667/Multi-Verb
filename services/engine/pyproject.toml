@@ -51,6 +51,7 @@ dev = [
 verbio-engine = "verbio_engine.main:run"
 verbio-engine-agent = "verbio_engine.agent.worker:run_worker"
 verbio-export-schemas = "verbio_engine.schema_export:main"
+verbio-fake-participant = "verbio_engine.devtools.fake_participant:main"
 
 [build-system]
 requires = ["hatchling"]

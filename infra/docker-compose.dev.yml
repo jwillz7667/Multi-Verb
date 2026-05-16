@@ -90,6 +90,31 @@ services:
       - "5050:80"
     profiles: ["debug"]
 
+  # LiveKit Server — local SFU for E2E tests and dev when developers
+  # don't want to hit LiveKit Cloud. The dev keys here are well-known
+  # placeholders; they MUST NOT be reused in any non-local context.
+  # Production routes traffic to LiveKit Cloud via LIVEKIT_URL/KEY/SECRET.
+  livekit:
+    image: livekit/livekit-server:v1.8.4
+    container_name: verbio-livekit
+    restart: unless-stopped
+    command:
+      - --dev
+      - --bind=0.0.0.0
+    environment:
+      LIVEKIT_KEYS: "devkey: devsecret_long_enough_for_local_use_only_xxxxxxxx"
+    ports:
+      - "7880:7880" # signal/HTTP
+      - "7881:7881" # WebRTC TCP
+      - "7882:7882/udp" # WebRTC UDP
+    profiles: ["e2e"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7880/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
 volumes:
   postgres-data:
     name: verbio-postgres-data

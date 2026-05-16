@@ -37,6 +37,9 @@ yarn-error.log*
 /coverage
 /playwright-report
 /test-results
+# Playwright auth fixture: written by tests/e2e/global-setup.ts on
+# every run; the session cookie is per-run noise, not source.
+/tests/e2e/.auth/
 
 # editor
 .idea
