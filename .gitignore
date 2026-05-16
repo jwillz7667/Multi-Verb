@@ -158,6 +158,11 @@ recordings/
 .direnv/
 
 # -----------------------------------------------------------------------------
+# Claude Code working-directory state (scheduled-task lock, etc.) — local only.
+# -----------------------------------------------------------------------------
+.claude/
+
+# -----------------------------------------------------------------------------
 # Design handoff archive — the extracted folder is committed for reference;
 # the .zip itself is redundant and only kept locally when newly delivered.
 # -----------------------------------------------------------------------------

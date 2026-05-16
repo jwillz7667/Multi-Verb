@@ -2,9 +2,13 @@
 
 Reads `DATABASE_URL_DIRECT` from the environment (the non-pgBouncer
 URL — pgBouncer rewrites prepared-statement names, which breaks
-Alembic's introspection). The migrations themselves are hand-written
-SQL/op DSL; autogenerate is not wired yet because the SQLAlchemy
-metadata module (`verbio_engine.persistence.models`) lands in Phase 2.
+Alembic's introspection).
+
+`target_metadata` points at the SQLAlchemy declarative metadata in
+`verbio_engine.persistence`, so `alembic revision --autogenerate`
+can diff the live database against the ORM models. We still review
+every generated migration by hand — autogenerate is a draft, not a
+substitute for thinking about the change.
 
 To run:
 
@@ -18,17 +22,20 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import MetaData, engine_from_config, pool
+from sqlalchemy import engine_from_config, pool
+
+# Import the ORM metadata so autogenerate sees the model definitions.
+# Local import (instead of top-level) keeps the env.py importable in
+# CI environments that don't ship the verbio_engine deps — e.g., a
+# pure SQL-rendering pass via `alembic upgrade --sql`.
+from verbio_engine.persistence import metadata as _metadata
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Placeholder MetaData — Phase 2 will replace this with the import of
-# `verbio_engine.persistence.models.Base.metadata`. Until then,
-# autogenerate is a no-op and migrations must be hand-authored.
-target_metadata = MetaData()
+target_metadata = _metadata
 
 
 def _resolve_database_url() -> str:

@@ -8,14 +8,14 @@ license = { text = "Proprietary — Viral Ventures LLC" }
 authors = [{ name = "Viral Ventures LLC", email = "engineering@viralventures.dev" }]
 keywords = ["livekit", "qualitative-research", "moderator", "fastapi"]
 
-# Runtime dependencies — kept lean for Phase 0. LiveKit Agents, Deepgram,
-# Anthropic, Cartesia, ElevenLabs, asyncpg, redis-py are added in the
-# phase that first uses them (see brief §14).
+# Runtime dependencies. LiveKit Agents, Deepgram, Anthropic, Cartesia,
+# ElevenLabs are added in the phase that first uses them (see brief §14).
 #
-# Alembic + SQLAlchemy + psycopg2-binary land in Phase 0 because the
-# first migration (`_health` table) is part of the Phase 0 done-when.
-# asyncpg ships when the request path needs it (Phase 1+); the Alembic
-# CLI uses the sync psycopg2 driver per the standard pattern.
+# Alembic + SQLAlchemy land in Phase 0 (the `_health` migration). Phase 1
+# adds asyncpg (runtime async driver) and redis-py (event publishing).
+# psycopg2-binary stays alongside asyncpg because the Alembic CLI is sync
+# — env.py normalises the URL into a psycopg2-driver form at migration
+# time, regardless of how the runtime configures the async engine.
 dependencies = [
   "fastapi>=0.115.0,<0.116",
   "uvicorn[standard]>=0.32.0,<0.35",
@@ -23,8 +23,10 @@ dependencies = [
   "pydantic-settings>=2.6.0,<3",
   "structlog>=24.4.0,<25",
   "alembic>=1.14.0,<2",
-  "sqlalchemy>=2.0.36,<3",
+  "sqlalchemy[asyncio]>=2.0.36,<3",
   "psycopg2-binary>=2.9.10,<3",
+  "asyncpg>=0.30.0,<0.31",
+  "redis>=5.2.0,<6",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,7 @@ dev = [
   "httpx>=0.28.0,<0.29",
   "ruff>=0.8.0,<0.9",
   "mypy>=1.13.0,<2",
+  "testcontainers[postgres,redis]>=4.9.0,<5",
 ]
 
 [project.scripts]
@@ -62,6 +65,7 @@ dev-dependencies = [
   "httpx>=0.28.0,<0.29",
   "ruff>=0.8.0,<0.9",
   "mypy>=1.13.0,<2",
+  "testcontainers[postgres,redis]>=4.9.0,<5",
 ]
 
 # ---------------------------------------------------------------------------
@@ -139,6 +143,12 @@ files = ["verbio_engine", "tests"]
 module = "tests.*"
 disallow_untyped_decorators = false
 
+# testcontainers ships without `py.typed`. Treat its modules as untyped
+# rather than silencing per call-site.
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
@@ -164,6 +174,11 @@ markers = [
 filterwarnings = [
   "error",
   "ignore::DeprecationWarning:pydantic.*",
+  # testcontainers 4.x still ships the deprecated `wait_container_is_ready`
+  # decorator alongside the new structured wait strategies, and trips its
+  # own DeprecationWarning on import. Track upstream:
+  # https://github.com/testcontainers/testcontainers-python/issues
+  "ignore::DeprecationWarning:testcontainers.*",
 ]
 
 [tool.coverage.run]
