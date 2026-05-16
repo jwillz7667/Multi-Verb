@@ -24,6 +24,7 @@ from verbio_engine.domain import (
     QuietnessBudget,
     ResearcherCommand,
     RuleEvaluation,
+    SessionState,
 )
 from verbio_engine.realtime import TranscriptEvent
 
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 
 EXPORTED_MODELS: tuple[tuple[str, type[BaseModel]], ...] = (
     ("participant_state", ParticipantState),
+    ("session_state", SessionState),
     ("moderator_decision", ModeratorDecision),
     ("rule_evaluation", RuleEvaluation),
     ("researcher_command", ResearcherCommand),
