@@ -5,13 +5,17 @@ introspection; runtime queries go through asyncpg via an async
 `AsyncEngine`.
 
 Public surface:
-  - `Base`            : declarative base for all ORM models
-  - `Session`         : sessions table model
-  - `Participant`    : participants table model
-  - `Utterance`       : utterances table model
-  - `create_engine`   : async engine factory
-  - `session_factory` : async sessionmaker factory
-  - `UtteranceRepo`   : write/read API for utterances
+  - `Base`              : declarative base for all ORM models
+  - `Session`           : sessions table model
+  - `Participant`       : participants table model
+  - `Utterance`         : utterances table model
+  - `create_engine`     : async engine factory
+  - `session_factory`   : async sessionmaker factory
+  - `SessionRepo`       : lifecycle API for sessions
+  - `ParticipantRepo`   : join/leave API for participants
+  - `ParticipantJoin`   : input record for participant upsert
+  - `UtteranceRepo`     : write/read API for utterances
+  - `UtteranceInsert`   : input record for utterance insert
 
 Anything outside this barrel is internal — consumers depend only on
 the public surface so the implementation can move without ripples.
@@ -24,6 +28,11 @@ from verbio_engine.persistence.engine import (
     dispose_engine,
 )
 from verbio_engine.persistence.models import Participant, Session, Utterance
+from verbio_engine.persistence.repositories.participants import (
+    ParticipantJoin,
+    ParticipantRepo,
+)
+from verbio_engine.persistence.repositories.sessions import SessionRepo
 from verbio_engine.persistence.repositories.utterances import (
     UtteranceInsert,
     UtteranceRepo,
@@ -32,7 +41,10 @@ from verbio_engine.persistence.repositories.utterances import (
 __all__ = [
     "Base",
     "Participant",
+    "ParticipantJoin",
+    "ParticipantRepo",
     "Session",
+    "SessionRepo",
     "Utterance",
     "UtteranceInsert",
     "UtteranceRepo",
