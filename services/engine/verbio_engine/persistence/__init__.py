@@ -10,6 +10,8 @@ Public surface:
   - `Participant`           : participants table model
   - `Utterance`             : utterances table model
   - `StateSnapshot`         : state_snapshots table model (P2 L3)
+  - `Decision`              : decisions table model (P3 L9)
+  - `RuleEvaluation`        : rule_evaluations table model (P3 L9)
   - `create_engine`         : async engine factory
   - `session_factory`       : async sessionmaker factory
   - `SessionRepo`           : lifecycle API for sessions
@@ -19,6 +21,10 @@ Public surface:
   - `UtteranceInsert`       : input record for utterance insert
   - `StateSnapshotRepo`     : write API for state snapshots (P2 L3)
   - `StateSnapshotInsert`   : input record for state-snapshot insert
+  - `DecisionRepo`          : write API for decisions (P3 L9)
+  - `DecisionInsert`        : input record for decision insert
+  - `RuleEvaluationRepo`    : write API for rule evaluations (P3 L9)
+  - `RuleEvaluationInsert`  : input record for rule-evaluation insert
 
 Anything outside this barrel is internal — consumers depend only on
 the public surface so the implementation can move without ripples.
@@ -31,14 +37,24 @@ from verbio_engine.persistence.engine import (
     dispose_engine,
 )
 from verbio_engine.persistence.models import (
+    Decision,
     Participant,
+    RuleEvaluation,
     Session,
     StateSnapshot,
     Utterance,
 )
+from verbio_engine.persistence.repositories.decisions import (
+    DecisionInsert,
+    DecisionRepo,
+)
 from verbio_engine.persistence.repositories.participants import (
     ParticipantJoin,
     ParticipantRepo,
+)
+from verbio_engine.persistence.repositories.rule_evaluations import (
+    RuleEvaluationInsert,
+    RuleEvaluationRepo,
 )
 from verbio_engine.persistence.repositories.sessions import SessionRepo
 from verbio_engine.persistence.repositories.state_snapshots import (
@@ -52,9 +68,15 @@ from verbio_engine.persistence.repositories.utterances import (
 
 __all__ = [
     "Base",
+    "Decision",
+    "DecisionInsert",
+    "DecisionRepo",
     "Participant",
     "ParticipantJoin",
     "ParticipantRepo",
+    "RuleEvaluation",
+    "RuleEvaluationInsert",
+    "RuleEvaluationRepo",
     "Session",
     "SessionRepo",
     "StateSnapshot",

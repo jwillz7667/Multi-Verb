@@ -1,15 +1,16 @@
-"""ORM models for verbio-engine — Phase 1 + Phase 2 L3 subset.
+"""ORM models for verbio-engine — Phase 1 + Phase 2 + Phase 3 subset.
 
 Mirrors the Postgres schema in brief §10.1. Tables introduced so far:
 
-  - sessions        : one row per moderated session (Phase 1)
-  - participants    : one row per joined participant (Phase 1)
-  - utterances      : final + interim STT outputs with timing (Phase 1)
-  - state_snapshots : full SessionState frozen every tick (Phase 2 L3)
+  - sessions         : one row per moderated session (Phase 1)
+  - participants     : one row per joined participant (Phase 1)
+  - utterances       : final + interim STT outputs with timing (Phase 1)
+  - state_snapshots  : full SessionState frozen every tick (Phase 2 L3)
+  - decisions        : one row per tick — the action chosen or stay_silent (Phase 3 L9)
+  - rule_evaluations : one row per rule per tick — fired or not (Phase 3 L9)
 
-`studies` and `decisions`/`rule_evaluations` land in Phase 3.
-`sessions.study_id` is intentionally nullable until Phase 3 introduces
-studies, so Phase 1 sessions can be created standalone.
+`studies` is still pending; `sessions.study_id` remains nullable until
+the studies table lands so Phase 1-2 sessions stay creatable standalone.
 
 Column types match the SQL in §10.1; differences are called out inline.
 """
@@ -29,7 +30,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from verbio_engine.persistence.base import Base
@@ -259,3 +260,142 @@ class StateSnapshot(Base):
             "tick_id",
         ),
     )
+
+
+class Decision(Base):
+    """One row per tick — the action the engine chose, even when silent.
+
+    `action='stay_silent'` rows are persisted at the same fidelity as
+    spoken ones (brief §2 principle #2: every decision is auditable —
+    silence included). The reason the row exists at all is so the
+    dashboard can answer "why didn't it speak here?".
+
+    `target_participant_id` uses `ON DELETE SET NULL` at the DB layer so
+    a participant purge for retention leaves the historical decisions
+    intact. We lose the link but keep the moderator's intent.
+    """
+
+    __tablename__ = "decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tick_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(Text(), nullable=False)
+    target_participant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("participants.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source: Mapped[str] = mapped_column(Text(), nullable=False)
+    triggering_rule: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    researcher_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    researcher_hint: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    reason_codes: Mapped[list[str]] = mapped_column(
+        ARRAY(Text()),
+        nullable=False,
+        default=list,
+    )
+    reason_human: Mapped[str] = mapped_column(
+        Text(),
+        nullable=False,
+        default="",
+    )
+    confidence: Mapped[float | None] = mapped_column(REAL(), nullable=True)
+    suppressed_by: Mapped[list[str]] = mapped_column(
+        ARRAY(Text()),
+        nullable=False,
+        default=list,
+    )
+    was_executed: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    llm_prompt: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(),
+        nullable=True,
+    )
+    llm_output: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    tts_audio_url: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    spoken_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    cooldown_until: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+    )
+
+    evaluations: Mapped[list[RuleEvaluation]] = relationship(
+        back_populates="decision",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )
+
+    __table_args__ = (
+        # (session_id, ts) covers the dashboard timeline scan.
+        Index("ix_decisions_session_id_ts", "session_id", "ts"),
+        # Partial index for the "spoken decisions only" filter — most
+        # shadow-mode rows are silent so the partial form is tiny.
+        Index(
+            "ix_decisions_session_id_was_executed_true",
+            "session_id",
+            "was_executed",
+            postgresql_where="was_executed = true",
+        ),
+    )
+
+
+class RuleEvaluation(Base):
+    """One row per rule per tick — fired or not.
+
+    Persisted at the same fidelity as the decision so a researcher can
+    answer "what did rule X see here, and why did it stay silent?".
+    `predicate_inputs` carries the rule-specific snapshot of state that
+    the predicate read; the shape varies per rule (hence JSONB).
+
+    Cascades with the parent decision: dropping a decision (rare —
+    retention or test cleanup) takes its evaluations with it.
+    """
+
+    __tablename__ = "rule_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("decisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rule_name: Mapped[str] = mapped_column(Text(), nullable=False)
+    rule_version: Mapped[str] = mapped_column(Text(), nullable=False)
+    fired: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    suppressed_reason: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    predicate_inputs: Mapped[dict[str, object]] = mapped_column(
+        JSONB(),
+        nullable=False,
+        default=dict,
+    )
+    confidence: Mapped[float] = mapped_column(
+        REAL(),
+        nullable=False,
+        default=0.0,
+    )
+
+    decision: Mapped[Decision] = relationship(back_populates="evaluations")
+
+    __table_args__ = (Index("ix_rule_evaluations_decision_id", "decision_id"),)
