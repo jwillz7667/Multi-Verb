@@ -29,13 +29,15 @@
  */
 
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ReplayAudioPlayer } from './replay-audio-player';
 import { ReplayDecisionDetail } from './replay-decision-detail';
+import { ReplayFilters, EMPTY_FILTERS, applyDecisionFilters } from './replay-filters';
 import { ReplayStateSnapshot } from './replay-state-snapshot';
 import { ReplayTimeline } from './replay-timeline';
 
+import type { ReplayFiltersState } from './replay-filters';
 import type { ReplayBootstrap } from './replay-types';
 
 interface Props {
@@ -52,6 +54,7 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
   const initialTs = session.actual_start ?? session.created_at;
   const [currentTs, setCurrentTs] = useState<string>(initialTs);
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<ReplayFiltersState>(EMPTY_FILTERS);
 
   const handleSeek = useCallback((ts: string): void => {
     setCurrentTs(ts);
@@ -59,6 +62,23 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
   const handleSelectDecision = useCallback((decisionId: string): void => {
     setSelectedDecisionId(decisionId);
   }, []);
+  const handleFiltersChange = useCallback((next: ReplayFiltersState): void => {
+    setFilters(next);
+  }, []);
+
+  const filteredDecisions = useMemo(
+    () => applyDecisionFilters(decisions, filters),
+    [decisions, filters],
+  );
+
+  // If the active filter excludes the currently-selected decision,
+  // clear the selection so the detail pane doesn't show a row the
+  // researcher can no longer see on the timeline.
+  useEffect(() => {
+    if (selectedDecisionId === null) return;
+    const stillVisible = filteredDecisions.some((d) => d.id === selectedDecisionId);
+    if (!stillVisible) setSelectedDecisionId(null);
+  }, [filteredDecisions, selectedDecisionId]);
 
   const durationLabel = useMemo(
     () => formatDurationLabel(session.actual_start, session.actual_end),
@@ -120,8 +140,8 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
           <div className="flex items-center justify-between">
             <p className="text-text-secondary text-xs">
               {participants.length} participant lane{participants.length === 1 ? '' : 's'} ·{' '}
-              {decisions.length} decision{decisions.length === 1 ? '' : 's'} · {flags.length} flag
-              {flags.length === 1 ? '' : 's'}
+              {filteredDecisions.length} decision{filteredDecisions.length === 1 ? '' : 's'} ·{' '}
+              {flags.length} flag{flags.length === 1 ? '' : 's'}
             </p>
             <p className="text-text-tertiary font-mono text-xs">@ {currentTs}</p>
           </div>
@@ -129,7 +149,7 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
             session={session}
             participants={participants}
             utterances={initial_utterances}
-            decisions={decisions}
+            decisions={filteredDecisions}
             flags={flags}
             currentTs={currentTs}
             selectedDecisionId={selectedDecisionId}
@@ -169,18 +189,18 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
         </section>
 
         {/*
-          L9 — filters. Action / participant / rule / source. Wired in
-          L9; the placeholder reserves the chrome so the page doesn't
-          re-flow on first paint of that layer.
+          L9 — filters. Action / participant / rule / source. Filter
+          state lives here so it can narrow both the timeline markers
+          and the decision-detail eligibility in one move. Selection
+          clears below when an active filter excludes it.
         */}
-        <section
-          className="border-border-default bg-surface-primary flex flex-wrap items-center gap-3 rounded-lg border px-6 py-3"
-          data-testid="replay-filters-slot"
-        >
-          <span className="text-text-tertiary text-xs uppercase tracking-wide">Filters</span>
-          <span className="text-text-secondary text-xs">action · participant · rule · source</span>
-          <span className="text-text-tertiary ml-auto text-xs">interactive in P6 L9</span>
-        </section>
+        <ReplayFilters
+          decisions={decisions}
+          participants={participants}
+          filters={filters}
+          filteredCount={filteredDecisions.length}
+          onChange={handleFiltersChange}
+        />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/*
@@ -206,7 +226,7 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
           */}
           <ReplayDecisionDetail
             sessionId={session.id}
-            decisions={decisions}
+            decisions={filteredDecisions}
             participants={participants}
             selectedDecisionId={selectedDecisionId}
           />

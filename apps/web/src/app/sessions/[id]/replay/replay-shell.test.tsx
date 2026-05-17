@@ -192,6 +192,22 @@ describe('<ReplayShell />', () => {
 
     expect(screen.getByText(/3 total · 2 spoken/i)).toBeInTheDocument();
   });
+
+  it('renders filter chips for the actions present in the bootstrap decisions', () => {
+    render(
+      <ReplayShell
+        bootstrap={makeBootstrap({
+          decisions: [
+            makeDecision('d-1', { action: 'stay_silent' }),
+            makeDecision('d-2', { action: 'prompt' }),
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId('replay-filter-actions-chip-stay_silent')).toBeInTheDocument();
+    expect(screen.getByTestId('replay-filter-actions-chip-prompt')).toBeInTheDocument();
+  });
 });
 
 function makeDecision(
