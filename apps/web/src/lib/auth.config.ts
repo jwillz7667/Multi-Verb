@@ -12,6 +12,16 @@
 
 import type { NextAuthConfig } from 'next-auth';
 
+// `dev:auto-sign-in` — set DEV_AUTO_SIGN_IN_USER to a user id at boot
+// to bypass Auth.js entirely in local dev. Lets contributors drive the
+// UI without setting up a Resend key. Gated by NODE_ENV !== production
+// so it can never authorize a real deployment, even if the env var
+// leaks into Vercel by mistake.
+const isProd = process.env.NODE_ENV === 'production';
+const devAutoSignInUser = isProd ? undefined : process.env['DEV_AUTO_SIGN_IN_USER'];
+
+export const isDevAutoSignInEnabled = devAutoSignInUser !== undefined && devAutoSignInUser !== '';
+
 export const authConfig = {
   pages: {
     signIn: '/sign-in',
@@ -20,6 +30,8 @@ export const authConfig = {
   },
   callbacks: {
     authorized({ auth, request }) {
+      if (isDevAutoSignInEnabled) return true;
+
       const isLoggedIn = auth?.user !== undefined;
       const path = request.nextUrl.pathname;
 

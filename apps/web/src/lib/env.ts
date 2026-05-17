@@ -58,7 +58,13 @@ const serverSchema = clientSchema.extend({
 
   AUTH_SECRET: requiredSecret('AUTH_SECRET'),
   AUTH_RESEND_KEY: optionalSecret,
-  AUTH_EMAIL_FROM: z.string().email('AUTH_EMAIL_FROM must be a valid email').optional(),
+  // Resend accepts either a bare email (`noreply@x.com`) or RFC 5322
+  // name format (`Verbio <noreply@x.com>`). Validate either is present.
+  AUTH_EMAIL_FROM: emptyAsUndefined.pipe(z.string().min(3).optional()),
+
+  // `dev:auto-sign-in` — bypasses Auth.js in local dev; see auth.config.ts
+  DEV_AUTO_SIGN_IN_USER: optionalSecret,
+  DEV_AUTO_SIGN_IN_EMAIL: optionalSecret,
 
   R2_ACCOUNT_ID: optionalSecret,
   R2_ACCESS_KEY_ID: optionalSecret,
