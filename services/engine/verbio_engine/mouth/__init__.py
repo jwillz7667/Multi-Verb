@@ -19,6 +19,9 @@ Public surface:
   - `DeepSeekMouth` (P4 L2) — streaming production mouth.
   - `TemplatedMouth` (P4 L2) — fallback-only mouth, also used in
     shadow / smoke tests to avoid billing the LLM.
+  - `FallbackPhraseCache` + `CachedFallback` + `SPOKEN_FALLBACK_ACTIONS`
+    (P4 L6) — pre-synthesised templated audio for the §9 instant
+    fallback path.
 
 Direct cross-module imports across the seam are forbidden — anything
 the runtime needs from the mouth package goes through this barrel.
@@ -32,6 +35,11 @@ from verbio_engine.mouth.deepseek import (
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
     DeepSeekMouth,
+)
+from verbio_engine.mouth.fallback_cache import (
+    SPOKEN_FALLBACK_ACTIONS,
+    CachedFallback,
+    FallbackPhraseCache,
 )
 from verbio_engine.mouth.persona import (
     ModeratorPersona,
@@ -50,7 +58,10 @@ __all__ = [
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
+    "SPOKEN_FALLBACK_ACTIONS",
+    "CachedFallback",
     "DeepSeekMouth",
+    "FallbackPhraseCache",
     "ModeratorPersona",
     "MouthChunk",
     "MouthClient",
