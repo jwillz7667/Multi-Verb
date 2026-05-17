@@ -6,8 +6,8 @@ moderator participant's audio track.
 
 The contract is intentionally minimal: a single `synthesize(request,
 text) -> AsyncIterator[AudioChunk]` method per implementation, so the
-default provider (Cartesia Sonic) and the fallback (ElevenLabs Flash,
-P4 L4) are interchangeable. Voice selection is driven by the
+default provider (Cartesia Sonic) and the fallback (ElevenLabs Flash)
+are interchangeable. Voice selection is driven by the
 `ModeratorPersona`'s `voice_provider` + `voice_id` fields — the wiring
 layer picks which TTSClient instance to invoke per persona.
 
@@ -15,6 +15,7 @@ Public surface:
   - `TTSClient` (Protocol) + `TTSRequest` + `AudioChunk` — the contract.
   - `TTSError` — boundary exception wrapping HTTP / parse failures.
   - `CartesiaTTS` (P4 L3) — production default.
+  - `ElevenLabsTTS` (P4 L4) — Flash-model fallback.
 """
 
 from verbio_engine.tts.cartesia import (
@@ -22,6 +23,11 @@ from verbio_engine.tts.cartesia import (
     DEFAULT_CARTESIA_VERSION,
     DEFAULT_MODEL_ID as CARTESIA_DEFAULT_MODEL_ID,
     CartesiaTTS,
+)
+from verbio_engine.tts.elevenlabs import (
+    DEFAULT_BASE_URL as ELEVENLABS_DEFAULT_BASE_URL,
+    DEFAULT_MODEL_ID as ELEVENLABS_DEFAULT_MODEL_ID,
+    ElevenLabsTTS,
 )
 from verbio_engine.tts.protocol import (
     DEFAULT_SAMPLE_RATE,
@@ -36,8 +42,11 @@ __all__ = [
     "CARTESIA_DEFAULT_MODEL_ID",
     "DEFAULT_CARTESIA_VERSION",
     "DEFAULT_SAMPLE_RATE",
+    "ELEVENLABS_DEFAULT_BASE_URL",
+    "ELEVENLABS_DEFAULT_MODEL_ID",
     "AudioChunk",
     "CartesiaTTS",
+    "ElevenLabsTTS",
     "TTSClient",
     "TTSError",
     "TTSRequest",
