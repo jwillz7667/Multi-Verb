@@ -951,3 +951,218 @@ class TestManualOverride:
         assert isinstance(second, Decision)
         assert second.source == "auto"
         assert second.triggering_rule == "firing_rule"
+
+
+# ---------------------------------------------------------------------------
+# Whisper override (P5 L4)
+# ---------------------------------------------------------------------------
+
+
+class TestWhisperOverride:
+    """Whisper commands override the resolver with `source="researcher_whisper"`.
+
+    Same FK-stamping + decision-id reuse semantics as the force_* path,
+    but the persisted decision carries the verbatim text on
+    `researcher_hint` and the dispatcher must hand off so the executor's
+    whisper branch can skip the mouth and pipe the text straight to TTS.
+    """
+
+    async def test_whisper_overrides_resolver_with_verbatim_text(self) -> None:
+        # Even with a firing auto-rule, the whisper wins this tick.
+        firing = _StubRule(
+            name="firing_rule",
+            fires_after_tick=0,
+            proposed_action="prompt_participant",
+        )
+        target = uuid.uuid4()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={
+                "text": "Maria, your thoughts on the price?",
+                "target_participant_id": str(target),
+            },
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        # A whisper is a prompt with verbatim words; action stays the
+        # standard prompt_participant so downstream consumers (audit
+        # log, dashboard filters) treat it the same shape-wise.
+        assert persisted.action == "prompt_participant"
+        assert persisted.source == "researcher_whisper"
+        assert persisted.triggering_rule is None
+        assert persisted.researcher_id == uuid.UUID(cmd.researcher_id)
+        # researcher_hint carries the literal text the executor will
+        # send to TTS — this is the load-bearing invariant for L4.
+        assert persisted.researcher_hint == "Maria, your thoughts on the price?"
+        assert persisted.reason_codes == ["researcher_command:whisper"]
+        assert persisted.confidence == pytest.approx(1.0)
+        assert persisted.suppressed_by == []
+
+    async def test_whisper_without_target_persists_null(self) -> None:
+        # Group whisper — no target_participant_id in the payload.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "everyone hold on one moment"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.target_participant_id is None
+
+    async def test_whisper_reuses_resolver_decision_id_for_eval_fk(self) -> None:
+        # Same FK-consistency contract as force_*: the resolver's
+        # rule_evaluations stay linked to the row researchers see.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "exactly these words"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        decision = next(a.payload for a in actions if a.kind == "decision_add")
+        eval_rows = next(a.payload for a in actions if a.kind == "evals_add")
+        assert isinstance(decision, Decision)
+        assert isinstance(eval_rows, list)
+        assert all(r.decision_id == decision.id for r in eval_rows)
+
+    async def test_whisper_stamps_resulting_decision_id_on_audit_row(self) -> None:
+        # Whisper audit row's FK back to the decision must land inside
+        # the same transaction as the decision insert — same audit-first
+        # contract the force_* path uses.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "go ahead Alice"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        fk_updates = [a for a in actions if a.kind == "researcher_action_fk_update"]
+        assert len(fk_updates) == 1
+        # Ordering: audit insert (T1) → decision insert (T2 start) →
+        # FK stamp (still in T2). Without that order the FK can't resolve.
+        kinds = [a.kind for a in actions]
+        assert kinds.index("researcher_action_add") < kinds.index("decision_add")
+        assert kinds.index("decision_add") < kinds.index("researcher_action_fk_update")
+
+    async def test_whisper_decision_is_dispatched_to_executor(self) -> None:
+        # The P5 L4 broadening: the dispatcher gate now also accepts
+        # researcher_whisper so the executor can run its bypass-mouth
+        # branch.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "alice please go first"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        dispatcher = _RecordingDispatcher()
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0))
+
+        assert len(dispatcher.dispatched) == 1
+        dispatched_decision, _dispatched_state = dispatcher.dispatched[0]
+        assert dispatched_decision.action == "prompt_participant"  # type: ignore[attr-defined]
+        assert dispatched_decision.source == "researcher_whisper"  # type: ignore[attr-defined]
+        assert dispatched_decision.researcher_hint == "alice please go first"  # type: ignore[attr-defined]
+
+    async def test_whisper_does_not_update_cooldown_map(self) -> None:
+        # Same rationale as force_*: whisper has no triggering_rule, so
+        # it never debits any auto-rule cooldown budget.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "verbatim"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, _actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        next_actions: list[_RecordingAction] = []
+        listener._publisher.actions = next_actions  # type: ignore[attr-defined]
+        new_factory = _FakeSessionFactory(actions=next_actions)
+        listener._session_factory = new_factory  # type: ignore[assignment]
+
+        await listener(_state(tick_id=1, t=TICK_ZERO + timedelta(seconds=10)))
+
+        second = next(a.payload for a in next_actions if a.kind == "decision_add")
+        assert isinstance(second, Decision)
+        assert second.source == "auto"
+        assert second.triggering_rule == "firing_rule"
+
+    async def test_whisper_before_force_in_same_batch_wins(self) -> None:
+        # FIFO is uniform across force_* and whisper. The earlier
+        # command becomes the decision, the later one logs as an audit
+        # row with no FK linkage.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        first = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "spoken word for word"},
+        )
+        second = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_redirect",
+            payload={"topic": "loses-fifo"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[first, second]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.source == "researcher_whisper"
+        assert persisted.researcher_hint == "spoken word for word"
+        # Only the first override's audit row gets the FK stamp.
+        fk_updates = [a for a in actions if a.kind == "researcher_action_fk_update"]
+        assert len(fk_updates) == 1
+
+    async def test_force_before_whisper_in_same_batch_wins(self) -> None:
+        # Symmetric to the previous case — proves the FIFO is bidirectional.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        first = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={"prompt": "mouth-phrased intent"},
+        )
+        second = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="whisper",
+            payload={"text": "loses-fifo verbatim"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[first, second]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.source == "researcher_manual"
+        assert persisted.researcher_hint == "mouth-phrased intent"

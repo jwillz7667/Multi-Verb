@@ -1,7 +1,8 @@
 """Decision tick-listener — drain → resolve → maybe-override → persist → dispatch.
 
 Phase touchpoints: P3 L10 (resolver wired), P4 L8 (executor dispatch),
-P5 L2 (drain commands → audit rows), P5 L3 (manual override path).
+P5 L2 (drain commands → audit rows), P5 L3 (manual override path),
+P5 L4 (whisper override path).
 
 Plugged into the tick loop alongside `PersistAndPublishListener`. Each
 tick this listener:
@@ -16,13 +17,17 @@ tick this listener:
      always runs even when a manual override is present — its
      evaluations are still written so the dashboard's "Why quiet now?"
      panel can show what the rules would have done in parallel.
-  3. (P5 L3) If a spoken researcher command is in the drained batch,
-     replace the resolver's decision with the manual one, keeping the
-     resolver's decision_id so the per-rule evaluations stay FK-linked.
-     Manual decisions bypass cooldowns + the quietness budget; the
-     researcher's call is final for this tick.
+  3. (P5 L3 + L4) If an overriding researcher command is in the
+     drained batch (force_* or whisper, FIFO from the bus), replace
+     the resolver's decision with the manual / whisper one, keeping
+     the resolver's decision_id so the per-rule evaluations stay
+     FK-linked. Override decisions bypass cooldowns + the quietness
+     budget; the researcher's call is final for this tick. Force
+     commands land as `source="researcher_manual"` (mouth phrases the
+     hint); whisper commands land as `source="researcher_whisper"`
+     (executor sends the hint verbatim, skipping the mouth).
   4. Opens the decision transaction and writes the `decisions` row +
-     `rule_evaluations` rows together. If a spoken command was
+     `rule_evaluations` rows together. If an overriding command was
      processed in step 3, the matching `researcher_actions.resulting_decision_id`
      is stamped in the same transaction so the linkage is atomic with
      the decision it points at. Failure of this transaction leaves the
@@ -33,15 +38,16 @@ tick this listener:
      second); failures of the Redis side are swallowed by the
      publisher itself.
   6. Updates the cooldown map for the rule that won, so the next
-     tick's resolver call sees the fresh `last_won_at`. Manual
+     tick's resolver call sees the fresh `last_won_at`. Override
      decisions don't update cooldowns (no `triggering_rule`) —
      researcher overrides never debit the auto-rule budget.
-  7. (P4 L8 / P5 L3) When an `ExecutionDispatcher` is wired AND the
-     decision is non-silent AND source is `auto` or `researcher_manual`,
-     hands the decision off to the dispatcher — the actual
-     mouth/TTS/publisher run happens in a background task so the tick
-     loop never blocks (brief §6 step 6). Whisper commands take their
-     own dispatch path in P5 L4.
+  7. (P4 L8 / P5 L3 / P5 L4) When an `ExecutionDispatcher` is wired AND
+     the decision is non-silent AND source is `auto`,
+     `researcher_manual`, or `researcher_whisper`, hands the decision
+     off to the dispatcher — the actual mouth/TTS/publisher run
+     happens in a background task so the tick loop never blocks
+     (brief §6 step 6). The executor itself branches on source to skip
+     the mouth for whisper decisions.
 
 Shadow-mode behaviour (Phase 3): when no dispatcher is wired, the
 listener is identical to its P3 L10 form — every decision lands as
@@ -68,7 +74,13 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
-from verbio_engine.commands import build_manual_decision, first_spoken_command
+from verbio_engine.commands import (
+    SPOKEN_COMMAND_TYPES,
+    WHISPER_COMMAND_TYPE,
+    build_manual_decision,
+    build_whisper_decision,
+    first_overriding_command,
+)
 from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
     DecisionInsert,
@@ -143,25 +155,26 @@ class DecisionTickListener:
         # each tick and persisted to `researcher_actions`. None = run the
         # auto path only (shadow-mode for researcher commands).
         self._command_bus = command_bus
-        # Optional execution path. When wired, non-silent auto +
-        # researcher_manual decisions are handed to the dispatcher
-        # after persist+publish; the tick loop continues immediately
-        # (brief §6 step 6).
+        # Optional execution path. When wired, non-silent auto,
+        # researcher_manual, and researcher_whisper decisions are
+        # handed to the dispatcher after persist+publish; the tick
+        # loop continues immediately (brief §6 step 6).
         self._executor_dispatcher = executor_dispatcher
 
     async def __call__(self, state: SessionState) -> None:
-        # P5 L2/L3: drain researcher commands at the top of the tick so
-        # the audit row exists even if a later step in this tick fails.
-        # Spoken commands (force_*) override the resolver's decision
-        # below; non-spoken ones (mute, budget, flag, …) ride along as
-        # audit rows only — their semantics land in later layers (P5 L5+).
+        # P5 L2/L3/L4: drain researcher commands at the top of the tick
+        # so the audit row exists even if a later step in this tick
+        # fails. Override commands (force_*, whisper) replace the
+        # resolver's decision below; non-overriding ones (mute, budget,
+        # flag, …) ride along as audit rows only — their semantics land
+        # in later layers (P5 L5+).
         commands: list[ResearcherCommand] = []
         if self._command_bus is not None:
             commands = await self._command_bus.drain(state.session_id)
             if commands:
                 await self._persist_commands(commands)
 
-        spoken = first_spoken_command(commands)
+        override = first_overriding_command(commands)
 
         output = resolve(
             state=state,
@@ -170,17 +183,31 @@ class DecisionTickListener:
             cooldowns=self._cooldowns,
         )
         decision = output.decision
-        if spoken is not None:
+        if override is not None:
             # Override the resolver's decision but REUSE its
             # decision_id so the parallel `rule_evaluations` remain
             # FK-linked to the row researchers actually see. Source
-            # becomes `researcher_manual`; cooldown + budget don't apply.
-            decision = build_manual_decision(
-                command=spoken,
-                state=state,
-                t=state.t,
-                decision_id=output.decision.decision_id,
-            )
+            # becomes `researcher_manual` (force_*) or
+            # `researcher_whisper` (whisper); cooldown + budget don't
+            # apply in either case.
+            if override.command_type in SPOKEN_COMMAND_TYPES:
+                decision = build_manual_decision(
+                    command=override,
+                    state=state,
+                    t=state.t,
+                    decision_id=output.decision.decision_id,
+                )
+            else:
+                # Translator's `first_overriding_command` only returns
+                # types in SPOKEN_COMMAND_TYPES or {WHISPER_COMMAND_TYPE},
+                # so the else branch is exhaustively whisper.
+                assert override.command_type == WHISPER_COMMAND_TYPE
+                decision = build_whisper_decision(
+                    command=override,
+                    state=state,
+                    t=state.t,
+                    decision_id=output.decision.decision_id,
+                )
 
         target_pid = self._resolve_target(decision.target_participant_id)
 
@@ -231,7 +258,7 @@ class DecisionTickListener:
             if eval_records:
                 eval_repo = RuleEvaluationRepo(db)
                 await eval_repo.insert_many(eval_records)
-            if spoken is not None:
+            if override is not None:
                 # Stamp the FK back onto the audit row inside the
                 # decision tx so the link lands atomically with the
                 # decision it points at. If this tx aborts, the audit
@@ -239,7 +266,7 @@ class DecisionTickListener:
                 # no decision produced" and investigates the DB error.
                 action_repo = ResearcherActionRepo(db)
                 await action_repo.set_resulting_decision_id(
-                    command_id=spoken.command_id,
+                    command_id=override.command_id,
                     decision_id=decision.decision_id,
                 )
 
@@ -257,16 +284,17 @@ class DecisionTickListener:
         if decision.triggering_rule is not None:
             self._cooldowns[decision.triggering_rule] = state.t
 
-        # P4 L8 / P5 L3: dispatch non-silent decisions whose source
-        # goes through the standard mouth → TTS path. `auto` is the
-        # rules engine; `researcher_manual` is a force_* override
-        # (still phrased by the mouth using the researcher_hint as
-        # guidance). `researcher_whisper` (P5 L4) bypasses the mouth
-        # and has its own dispatch path — not handled here.
+        # P4 L8 / P5 L3 / P5 L4: dispatch non-silent decisions to the
+        # executor. `auto` is the rules engine; `researcher_manual` is
+        # a force_* override (mouth phrases the hint);
+        # `researcher_whisper` is verbatim text (executor's whisper
+        # branch skips the mouth). All three share the dispatcher path
+        # because §6 step 6's "tick loop never blocks on TTS" applies
+        # to any audible output, regardless of how the text was chosen.
         if (
             self._executor_dispatcher is not None
             and decision.action != "stay_silent"
-            and decision.source in {"auto", "researcher_manual"}
+            and decision.source in {"auto", "researcher_manual", "researcher_whisper"}
         ):
             self._executor_dispatcher.dispatch(decision, state)
 

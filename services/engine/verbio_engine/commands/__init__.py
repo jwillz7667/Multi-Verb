@@ -21,18 +21,26 @@ from verbio_engine.commands.bus import (
 )
 from verbio_engine.commands.translator import (
     MANUAL_COOLDOWN_SEC,
+    OVERRIDING_COMMAND_TYPES,
     SPOKEN_COMMAND_TYPES,
+    WHISPER_COMMAND_TYPE,
     build_manual_decision,
+    build_whisper_decision,
+    first_overriding_command,
     first_spoken_command,
 )
 
 __all__ = [
     "MANUAL_COOLDOWN_SEC",
+    "OVERRIDING_COMMAND_TYPES",
     "SPOKEN_COMMAND_TYPES",
+    "WHISPER_COMMAND_TYPE",
     "CommandBus",
     "NullCommandBus",
     "RedisCommandStreamBus",
     "build_manual_decision",
+    "build_whisper_decision",
     "commands_stream_key",
+    "first_overriding_command",
     "first_spoken_command",
 ]

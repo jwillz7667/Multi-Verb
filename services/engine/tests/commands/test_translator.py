@@ -22,8 +22,12 @@ import pytest
 
 from verbio_engine.commands.translator import (
     MANUAL_COOLDOWN_SEC,
+    OVERRIDING_COMMAND_TYPES,
     SPOKEN_COMMAND_TYPES,
+    WHISPER_COMMAND_TYPE,
     build_manual_decision,
+    build_whisper_decision,
+    first_overriding_command,
     first_spoken_command,
 )
 from verbio_engine.domain.command import ResearcherCommand
@@ -69,9 +73,29 @@ def _cmd(
 
 
 def test_spoken_command_types_exact_membership() -> None:
-    # Pin the exact set so an accidental include of `whisper`
-    # (handled by P5 L4) shows up as a regression here.
+    # Pin the exact set. `whisper` is intentionally *not* in here —
+    # it overrides the resolver too but takes the whisper branch
+    # (P5 L4), tracked by WHISPER_COMMAND_TYPE / OVERRIDING_COMMAND_TYPES.
     assert frozenset({"force_prompt", "force_redirect", "force_summary"}) == SPOKEN_COMMAND_TYPES
+
+
+def test_whisper_command_type_value() -> None:
+    # Pin the literal so an accidental rename in domain.command's
+    # ResearcherCommandType drags the translator out of sync.
+    assert WHISPER_COMMAND_TYPE == "whisper"
+
+
+def test_overriding_command_types_is_force_plus_whisper() -> None:
+    # The set the listener actually uses to decide "is this command an
+    # override worth replacing the resolver's decision with?". If
+    # someone adds a new spoken or whisper-like command in the future,
+    # they must remember to add it here too — this test forces them to
+    # update the set explicitly.
+    assert SPOKEN_COMMAND_TYPES | {WHISPER_COMMAND_TYPE} == OVERRIDING_COMMAND_TYPES
+    assert (
+        frozenset({"force_prompt", "force_redirect", "force_summary", "whisper"})
+        == OVERRIDING_COMMAND_TYPES
+    )
 
 
 def test_manual_cooldown_stays_below_quietness_budget_floor() -> None:
@@ -99,6 +123,13 @@ class TestFirstSpokenCommand:
         ]
         assert first_spoken_command(batch) is None
 
+    def test_whisper_is_not_a_spoken_command(self) -> None:
+        # `first_spoken_command` is the narrower scan — whisper is not
+        # in SPOKEN_COMMAND_TYPES because it bypasses the mouth.
+        # Listeners that want both should use `first_overriding_command`.
+        whisper = _cmd(command_type="whisper", payload={"text": "exactly this"})
+        assert first_spoken_command([whisper]) is None
+
     def test_returns_first_spoken_when_present(self) -> None:
         flag = _cmd(command_type="flag_moment")
         first_spoken = _cmd(command_type="force_prompt", payload={"prompt": "first"})
@@ -112,6 +143,52 @@ class TestFirstSpokenCommand:
         late = _cmd(command_type="force_summary", payload={})
         assert first_spoken_command([early, late]) is early
         assert first_spoken_command([late, early]) is late
+
+
+# ---------------------------------------------------------------------------
+# first_overriding_command
+# ---------------------------------------------------------------------------
+
+
+class TestFirstOverridingCommand:
+    def test_empty_input_returns_none(self) -> None:
+        assert first_overriding_command([]) is None
+
+    def test_only_non_overriding_returns_none(self) -> None:
+        batch = [
+            _cmd(command_type="flag_moment"),
+            _cmd(command_type="mute_moderator"),
+            _cmd(command_type="pause_session"),
+        ]
+        assert first_overriding_command(batch) is None
+
+    def test_returns_first_force_when_only_force(self) -> None:
+        force = _cmd(command_type="force_prompt", payload={"prompt": "x"})
+        assert first_overriding_command([force]) is force
+
+    def test_returns_whisper_when_only_whisper(self) -> None:
+        whisper = _cmd(command_type="whisper", payload={"text": "go ahead"})
+        assert first_overriding_command([whisper]) is whisper
+
+    def test_whisper_before_force_wins(self) -> None:
+        # FIFO must apply uniformly across force_* and whisper —
+        # neither type has priority over the other; the bus order is
+        # the only signal (brief §11.3).
+        whisper = _cmd(command_type="whisper", payload={"text": "first"})
+        force = _cmd(command_type="force_prompt", payload={"prompt": "second"})
+        assert first_overriding_command([whisper, force]) is whisper
+
+    def test_force_before_whisper_wins(self) -> None:
+        force = _cmd(command_type="force_redirect", payload={"topic": "first"})
+        whisper = _cmd(command_type="whisper", payload={"text": "second"})
+        assert first_overriding_command([force, whisper]) is force
+
+    def test_skips_non_overriding_to_find_override(self) -> None:
+        # A flag_moment in front of a whisper doesn't block the whisper —
+        # `first_overriding_command` ignores audit-only commands.
+        flag = _cmd(command_type="flag_moment")
+        whisper = _cmd(command_type="whisper", payload={"text": "exactly this"})
+        assert first_overriding_command([flag, whisper]) is whisper
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +314,144 @@ class TestBuildManualDecisionForceSummary:
 # ---------------------------------------------------------------------------
 # build_manual_decision: invariants + defensive paths
 # ---------------------------------------------------------------------------
+
+
+class TestBuildWhisperDecision:
+    def test_basic_whisper_translates_to_researcher_whisper_prompt(self) -> None:
+        decision_id = uuid.uuid4()
+        researcher_id = str(uuid.uuid4())
+        cmd = _cmd(
+            command_type="whisper",
+            payload={"text": "Maria, can you go first?"},
+            researcher_id=researcher_id,
+        )
+        state = _state(tick_id=11)
+
+        decision = build_whisper_decision(
+            command=cmd,
+            state=state,
+            t=TICK_T,
+            decision_id=decision_id,
+        )
+
+        assert decision.decision_id == decision_id
+        assert decision.session_id == SESSION_ID
+        assert decision.tick_id == 11
+        assert decision.timestamp == TICK_T
+        # A whisper is still a prompt — the moderator speaks at a
+        # participant — just with verbatim text rather than LLM phrasing.
+        assert decision.action == "prompt_participant"
+        assert decision.source == "researcher_whisper"
+        assert decision.triggering_rule is None
+        assert decision.researcher_id == researcher_id
+        # The hint carries the verbatim text; the executor reads this
+        # straight into TTS without re-phrasing through the mouth.
+        assert decision.researcher_hint == "Maria, can you go first?"
+        assert decision.reason_codes == ["researcher_command:whisper"]
+        assert decision.reason_human == ""
+        assert decision.confidence == pytest.approx(1.0)
+        assert decision.suppressed_by == []
+        assert decision.was_executed is False
+        assert decision.llm_prompt is None
+        assert decision.llm_output is None
+        assert decision.tts_audio_url is None
+        assert decision.spoken_at is None
+        assert decision.cooldown_until == TICK_T + timedelta(seconds=MANUAL_COOLDOWN_SEC)
+
+    def test_whisper_target_participant_passes_through(self) -> None:
+        target = uuid.uuid4()
+        cmd = _cmd(
+            command_type="whisper",
+            payload={"text": "your turn", "target_participant_id": str(target)},
+        )
+        decision = build_whisper_decision(
+            command=cmd,
+            state=_state(),
+            t=TICK_T,
+            decision_id=uuid.uuid4(),
+        )
+        assert decision.target_participant_id == str(target)
+
+    def test_whisper_without_target_is_null(self) -> None:
+        # Group whisper — no specific participant addressed.
+        cmd = _cmd(command_type="whisper", payload={"text": "everyone, one moment"})
+        decision = build_whisper_decision(
+            command=cmd,
+            state=_state(),
+            t=TICK_T,
+            decision_id=uuid.uuid4(),
+        )
+        assert decision.target_participant_id is None
+
+    def test_whisper_uses_caller_supplied_decision_id(self) -> None:
+        # Same FK-consistency contract as build_manual_decision: the
+        # listener reuses the resolver's tick decision_id so per-rule
+        # evaluations stay linked to the row researchers actually see.
+        caller_id = uuid.UUID("87654321-4321-4321-8321-cba987654321")
+        cmd = _cmd(command_type="whisper", payload={"text": "exact words"})
+        decision = build_whisper_decision(
+            command=cmd,
+            state=_state(),
+            t=TICK_T,
+            decision_id=caller_id,
+        )
+        assert decision.decision_id == caller_id
+
+    def test_whisper_cooldown_uses_custom_t(self) -> None:
+        cmd = _cmd(command_type="whisper", payload={"text": "now"})
+        custom_t = TICK_T + timedelta(seconds=123)
+        decision = build_whisper_decision(
+            command=cmd,
+            state=_state(),
+            t=custom_t,
+            decision_id=uuid.uuid4(),
+        )
+        assert decision.cooldown_until == custom_t + timedelta(seconds=MANUAL_COOLDOWN_SEC)
+
+    def test_whisper_rejects_force_command(self) -> None:
+        # Defensive boundary: `first_overriding_command` + the listener
+        # branch on command_type, so the wrong builder should never be
+        # called for the wrong type — but if it is, fail loudly.
+        cmd = _cmd(command_type="force_prompt", payload={"prompt": "x"})
+        with pytest.raises(ValueError, match="is not a whisper"):
+            build_whisper_decision(
+                command=cmd,
+                state=_state(),
+                t=TICK_T,
+                decision_id=uuid.uuid4(),
+            )
+
+    def test_whisper_rejects_empty_text_via_payload_validator(self) -> None:
+        # WhisperPayload pins min_length=1 on text; an empty string
+        # surfaces as a Pydantic ValidationError from model_validate.
+        cmd = _cmd(command_type="whisper", payload={"text": "non-empty"})
+        # Sanity check the happy path first so we know the rejection in
+        # the next assert isn't structural.
+        build_whisper_decision(
+            command=cmd,
+            state=_state(),
+            t=TICK_T,
+            decision_id=uuid.uuid4(),
+        )
+        # Pydantic raises ValidationError on empty text — caught here
+        # because the translator calls model_validate without catching.
+        from pydantic import ValidationError
+
+        bad_cmd = ResearcherCommand.model_construct(
+            command_id=uuid.uuid4(),
+            session_id=SESSION_ID,
+            researcher_id=str(uuid.uuid4()),
+            issued_at=TICK_T,
+            command_type="whisper",
+            payload={"text": ""},
+        )
+        with pytest.raises(ValidationError):
+            build_whisper_decision(
+                command=bad_cmd,
+                state=_state(),
+                t=TICK_T,
+                decision_id=uuid.uuid4(),
+            )
 
 
 class TestBuildManualDecisionInvariants:

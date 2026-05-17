@@ -502,3 +502,158 @@ class TestUntargetedActions:
         assert outcome.was_executed is True
         assert mouth.calls[0].context.target_display_name is None
         assert tts.calls
+
+
+# ---------------------------------------------------------------------------
+# Whisper path (P5 L4)
+# ---------------------------------------------------------------------------
+
+
+def _whisper_decision(
+    *,
+    text: str | None = "Maria, your thoughts on the price?",
+    target: str | None = "alice",
+    when: datetime | None = None,
+) -> ModeratorDecision:
+    """Researcher-whisper decision — source set so the executor skips the mouth."""
+    return ModeratorDecision(
+        decision_id=DECISION_ID,
+        session_id=SESSION_ID,
+        tick_id=0,
+        timestamp=when if when is not None else RULE_FIRED_AT,
+        action="prompt_participant",
+        target_participant_id=target,
+        source="researcher_whisper",
+        triggering_rule=None,
+        researcher_id=str(uuid.uuid4()),
+        researcher_hint=text,
+        reason_codes=["researcher_command:whisper"],
+        confidence=1.0,
+        cooldown_until=(when or RULE_FIRED_AT) + timedelta(seconds=3),
+    )
+
+
+class TestWhisperPath:
+    """Whisper decisions bypass the mouth: verbatim `researcher_hint` → TTS.
+
+    The mouth must not be invoked (no §8.4 budget, no template fallback,
+    no cache lookup); the executor pipes the researcher's exact words
+    straight into TTS and onto the publisher. The §6 latency guard still
+    runs so a backlogged tick doesn't speak stale words.
+    """
+
+    async def test_whisper_skips_mouth_and_sends_verbatim_text_to_tts(self) -> None:
+        executor, mouth, tts, publisher, _clock = _executor()
+
+        outcome = await executor.execute(
+            _whisper_decision(text="Maria, your thoughts on the price?"),
+            _state(),
+        )
+
+        assert outcome.was_executed is True
+        # The mouth is the load-bearing assertion: it must not be invoked.
+        assert mouth.calls == []
+        # TTS received the EXACT researcher text — not the mouth's
+        # default phrasing, not a template, not a cache entry.
+        assert len(tts.calls) == 1
+        sent_request, sent_text = tts.calls[0]
+        assert sent_request == TTSRequest(voice_id="voice-1")
+        assert sent_text == "Maria, your thoughts on the price?"
+        # llm_output reflects what was spoken (the verbatim text), so
+        # the audit row can render "moderator said: …" without ambiguity.
+        assert outcome.llm_output == "Maria, your thoughts on the price?"
+        assert outcome.spoken_at is not None
+        # No fallback codes: the whisper path doesn't run mouth/template logic.
+        assert outcome.suppressed_by == []
+        # PCM ends up on the publisher.
+        non_terminator = [c for c in publisher.captured if not c.is_final]
+        assert len(non_terminator) == 2
+        assert b"".join(c.pcm for c in non_terminator) == b"Maria, your thoughts on the price?"
+
+    async def test_whisper_ignores_fallback_cache_even_when_warm(self) -> None:
+        # Sanity check the bypass: a warm cache must not steal the
+        # verbatim text. The cache is keyed by persona+action templates,
+        # which are categorically wrong for researcher-typed words.
+        persona = _persona()
+        cache = FallbackPhraseCache()
+        await cache.warm(persona, _CacheWarmerTTS())
+
+        executor, mouth, tts, _pub, _clock = _executor(
+            persona=persona,
+            fallback_cache=cache,
+        )
+
+        outcome = await executor.execute(
+            _whisper_decision(text="researcher's literal words"),
+            _state(),
+        )
+
+        assert outcome.was_executed is True
+        assert mouth.calls == []
+        # TTS still ran with the verbatim text — cache stayed unused.
+        assert len(tts.calls) == 1
+        assert tts.calls[0][1] == "researcher's literal words"
+
+    async def test_whisper_with_none_hint_abandons_with_audit_code(self) -> None:
+        # The translator's WhisperPayload enforces non-empty text, but a
+        # direct caller could in principle build a decision with no hint.
+        # The executor must audit-and-abandon rather than crash.
+        executor, mouth, tts, publisher, _clock = _executor()
+
+        outcome = await executor.execute(_whisper_decision(text=None), _state())
+
+        assert outcome.was_executed is False
+        assert outcome.spoken_at is None
+        assert outcome.llm_output is None
+        assert outcome.suppressed_by == ["whisper_no_text"]
+        # Neither mouth, TTS, nor publisher were touched.
+        assert mouth.calls == []
+        assert tts.calls == []
+        assert publisher.captured == []
+
+    async def test_whisper_with_whitespace_only_hint_abandons(self) -> None:
+        # Same guard for whitespace — a "   " text would publish silence.
+        executor, _m, tts, publisher, _clock = _executor()
+
+        outcome = await executor.execute(_whisper_decision(text="   "), _state())
+
+        assert outcome.was_executed is False
+        assert outcome.suppressed_by == ["whisper_no_text"]
+        assert tts.calls == []
+        assert publisher.captured == []
+
+    async def test_whisper_tts_failure_records_tts_failed(self) -> None:
+        # The whisper path still benefits from the executor's TTS error
+        # handling — outcome flags `tts_failed`, audit row stays truthful.
+        tts = _FakeTTS(raise_exc=TTSError("provider 500"))
+        executor, _m, _tts, publisher, _clock = _executor(tts=tts)
+
+        outcome = await executor.execute(_whisper_decision(), _state())
+
+        assert outcome.was_executed is False
+        assert outcome.suppressed_by == ["tts_failed"]
+        # llm_output stays populated with the would-have-been-spoken
+        # text so researchers can see what the moderator was about to say.
+        assert outcome.llm_output == "Maria, your thoughts on the price?"
+        assert publisher.captured == []
+
+    async def test_whisper_respects_total_latency_guard(self) -> None:
+        # The §6 guard is universal: if the tick is already past the
+        # 1500ms budget by the time we reach TTS, we abandon and audit
+        # `latency_exceeded`. Whisper has no mouth call to burn the
+        # budget, so the clock starts already-past-budget (e.g., the
+        # tick spent its budget on a slow command-drain → persist before
+        # ever calling the executor).
+        clock = _ManualClock(RULE_FIRED_AT + timedelta(milliseconds=2000))
+        executor, _m, tts, publisher, _clock = _executor(clock=clock)
+
+        outcome = await executor.execute(_whisper_decision(), _state())
+
+        assert outcome.was_executed is False
+        assert outcome.suppressed_by == ["latency_exceeded"]
+        # llm_output keeps the researcher's text for the audit row.
+        assert outcome.llm_output == "Maria, your thoughts on the price?"
+        # TTS never ran.
+        assert tts.calls == []
+        assert publisher.captured == []
+        assert outcome.latency_ms >= DEFAULT_TOTAL_BUDGET_MS

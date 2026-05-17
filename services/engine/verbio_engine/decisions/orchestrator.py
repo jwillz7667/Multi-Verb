@@ -1,4 +1,4 @@
-"""`DecisionExecutor` — bridges a persisted decision to actual audio (P4 L8).
+"""`DecisionExecutor` — bridges a persisted decision to actual audio (P4 L8, P5 L4).
 
 The tick loop's job ends at the audit row (`DecisionTickListener`). This
 module owns the *execution* step — phrasing via the mouth layer,
@@ -22,6 +22,14 @@ Three brief commitments are encoded in here, not at the call site:
     budget is already burnt, we abandon execution with
     `suppressed_by=['latency_exceeded']` and `was_executed=False` —
     exactly the audit-trail outcome the brief mandates.
+
+Whisper path (P5 L4). When `decision.source == "researcher_whisper"`,
+the mouth layer is bypassed entirely: the researcher's verbatim text
+(carried on `decision.researcher_hint`) goes straight to TTS. The
+mouth budget, fallback templates, and cached-phrase shortcut do not
+apply — there's no LLM in the loop and no per-action template to fall
+back to. The §6 total latency guard still runs so a backlogged tick
+doesn't speak stale words; the audit row stays the truth.
 
 The dispatcher (`verbio_engine.decisions.dispatcher.ExecutionDispatcher`)
 runs the executor as a background `asyncio.Task` so the tick loop never
@@ -148,47 +156,82 @@ class DecisionExecutor:
         self._mouth_budget_sec = mouth_budget_ms / 1000.0
         self._total_budget_sec = total_budget_ms / 1000.0
 
-    async def execute(
+    async def execute(  # noqa: PLR0911 — each return is a distinct audit outcome
         self,
         decision: ModeratorDecision,
         state: SessionState,
     ) -> ExecutionOutcome:
-        """Phrase + speak `decision`. Returns the post-execution outcome."""
+        """Phrase + speak `decision`. Returns the post-execution outcome.
+
+        The function is intentionally a small state machine with one
+        return per audit-distinguishable outcome (whisper_no_text,
+        no_phrasing_available, latency_exceeded, cached fallback,
+        tts_failed, tts_no_audio, success). Merging branches would
+        obscure which code path produced which audit row — those rows
+        are the brief's "why didn't it speak?" guarantee, so the
+        explicit returns stay.
+        """
         suppressed: list[str] = []
         rule_fired_at = decision.timestamp
 
-        context = extract_phrasing_context(
-            state,
-            target_participant_id=decision.target_participant_id,
-            now=self._clock(),
-        )
-
-        # ----- Mouth (with §8.4 800ms budget) -------------------------------
-        request = MouthRequest(
-            action=decision.action,
-            persona=self._persona,
-            context=context,
-        )
-        text, mouth_failed = await self._invoke_mouth(request, suppressed)
-        if mouth_failed:
-            try:
-                text = format_template(decision.action, context)
-            except NoFallbackTemplateError:
-                # No template AND mouth failed → nothing to say. Audit
-                # the abandonment without crashing the dispatcher task.
+        text: str | None
+        mouth_failed: bool
+        if decision.source == "researcher_whisper":
+            # Verbatim path: researcher's exact text goes straight to TTS.
+            # No mouth call (so no §8.4 budget applies), no per-action
+            # template fallback, no cached-phrase shortcut — caching is
+            # keyed on persona+action templates, not arbitrary text.
+            text = decision.researcher_hint
+            mouth_failed = False
+            if text is None or not text.strip():
+                # WhisperPayload's validator enforces non-empty text, but a
+                # direct caller bypassing the translator (or a malformed
+                # decision row from a future migration) shouldn't crash
+                # the dispatcher task — audit the abandonment instead.
                 log.warning(
-                    "executor.no_phrasing_available",
+                    "executor.whisper_no_text",
                     decision_id=str(decision.decision_id),
-                    action=decision.action,
                 )
                 return ExecutionOutcome(
                     was_executed=False,
                     llm_output=None,
                     spoken_at=None,
-                    suppressed_by=[*suppressed, "no_phrasing_available"],
+                    suppressed_by=["whisper_no_text"],
                     latency_ms=self._elapsed_ms(rule_fired_at),
                 )
-            suppressed.append("llm_fallback")
+        else:
+            context = extract_phrasing_context(
+                state,
+                target_participant_id=decision.target_participant_id,
+                now=self._clock(),
+            )
+
+            # ----- Mouth (with §8.4 800ms budget) ---------------------------
+            request = MouthRequest(
+                action=decision.action,
+                persona=self._persona,
+                context=context,
+            )
+            text, mouth_failed = await self._invoke_mouth(request, suppressed)
+            if mouth_failed:
+                try:
+                    text = format_template(decision.action, context)
+                except NoFallbackTemplateError:
+                    # No template AND mouth failed → nothing to say.
+                    # Audit the abandonment without crashing the task.
+                    log.warning(
+                        "executor.no_phrasing_available",
+                        decision_id=str(decision.decision_id),
+                        action=decision.action,
+                    )
+                    return ExecutionOutcome(
+                        was_executed=False,
+                        llm_output=None,
+                        spoken_at=None,
+                        suppressed_by=[*suppressed, "no_phrasing_available"],
+                        latency_ms=self._elapsed_ms(rule_fired_at),
+                    )
+                suppressed.append("llm_fallback")
         assert text is not None
 
         # ----- §6 latency guard before any TTS ------------------------------
