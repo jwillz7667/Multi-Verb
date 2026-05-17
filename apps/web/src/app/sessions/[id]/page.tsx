@@ -51,7 +51,15 @@ export default async function SessionDetailPage({
           <Link href="/sessions" className="text-text-secondary text-sm hover:underline">
             ← All sessions
           </Link>
-          <span className="text-text-tertiary font-mono text-xs">{session.id}</span>
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/sessions/${session.id}/replay`}
+              className="text-text-secondary text-sm hover:underline"
+            >
+              Replay →
+            </Link>
+            <span className="text-text-tertiary font-mono text-xs">{session.id}</span>
+          </div>
         </div>
 
         <header>

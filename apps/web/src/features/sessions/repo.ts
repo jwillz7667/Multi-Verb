@@ -90,6 +90,114 @@ export async function findSessionById(id: string): Promise<ModeratedSessionRow |
   };
 }
 
+/**
+ * Replay-mode hydration row.
+ *
+ * Carries every field the `/sessions/[id]/replay` page needs to bootstrap:
+ *   - lifecycle bounds (`actualStart` / `actualEnd`) for the timeline scale,
+ *   - LiveKit room name for the breadcrumb,
+ *   - the composite recording R2 key + the per-participant key map so the
+ *     audio route can mint signed URLs without a second SELECT,
+ *   - `configSnapshot` so the replay can render the rules version + persona
+ *     the session ran under (frozen at start time per brief §7.5).
+ */
+export interface ReplaySessionRow extends ModeratedSessionRow {
+  recordingUrl: string | null;
+  // JSONB: written by the webhook handler as `{ identity: r2Key }`. The
+  // shape is validated downstream in `features/recordings/replay-urls`
+  // before being handed to the UI.
+  perParticipantRecordingUrls: unknown;
+  configSnapshot: unknown;
+}
+
+/**
+ * Load a session row with everything the replay page bootstraps from.
+ *
+ * The live dashboard's `findSessionById` deliberately skips the JSONB
+ * columns (configSnapshot, perParticipantRecordingUrls) because the
+ * live tiles don't read them and a hot reload of the session detail
+ * page shouldn't pull megabytes of state per render. Replay reads
+ * them once on mount and stops, so the heavier projection is fine.
+ *
+ * Returns `null` for unknown ids — the page handler turns that into a
+ * 404 so the response can't discriminate between "doesn't exist" and
+ * "exists in another org" once tenancy lands.
+ */
+export async function findSessionForReplay(id: string): Promise<ReplaySessionRow | null> {
+  const row = await db.moderatedSession.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      livekitRoomName: true,
+      status: true,
+      scheduledStart: true,
+      actualStart: true,
+      actualEnd: true,
+      createdAt: true,
+      recordingUrl: true,
+      perParticipantRecordingUrls: true,
+      configSnapshot: true,
+    },
+  });
+  if (row === null) return null;
+  return {
+    id: row.id,
+    livekitRoomName: row.livekitRoomName,
+    status: row.status as SessionStatus,
+    scheduledStart: row.scheduledStart,
+    actualStart: row.actualStart,
+    actualEnd: row.actualEnd,
+    createdAt: row.createdAt,
+    recordingUrl: row.recordingUrl,
+    perParticipantRecordingUrls: row.perParticipantRecordingUrls,
+    configSnapshot: row.configSnapshot,
+  };
+}
+
+export interface ParticipantRow {
+  id: string;
+  sessionId: string;
+  displayName: string;
+  role: string;
+  joinedAt: Date | null;
+  leftAt: Date | null;
+  livekitIdentity: string;
+}
+
+/**
+ * Roster for a session — used to render the 5 stacked speech bands and
+ * the participant filter dropdown in the replay UI.
+ *
+ * Ordered by `joinedAt ASC NULLS LAST` so the band order on the
+ * timeline matches the joining order (deterministic across re-renders).
+ * Participants who never connected sit at the bottom — they have no
+ * utterances to render but are still listed for completeness.
+ */
+export async function listParticipantsForSession(sessionId: string): Promise<ParticipantRow[]> {
+  const rows = await db.participant.findMany({
+    where: { sessionId },
+    orderBy: [{ joinedAt: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+    select: {
+      id: true,
+      sessionId: true,
+      displayName: true,
+      role: true,
+      joinedAt: true,
+      leftAt: true,
+      livekitIdentity: true,
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    displayName: row.displayName,
+    role: row.role,
+    joinedAt: row.joinedAt,
+    leftAt: row.leftAt,
+    livekitIdentity: row.livekitIdentity,
+  }));
+}
+
 export async function listRecentSessions(limit = 25): Promise<ModeratedSessionRow[]> {
   const rows = await db.moderatedSession.findMany({
     orderBy: { createdAt: 'desc' },
@@ -464,5 +572,253 @@ export async function listUtterancesSince(
     confidence: row.confidence,
     startTs: row.startTs,
     endTs: row.endTs,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Range queries — replay-mode reads (brief §11.2, Phase 6 L4).
+//
+// The live dashboard pages off `*Since` cursor queries because it only
+// ever moves forward through time. Replay scrubs both directions over
+// a bounded window, so we expose simple inclusive `[fromTs, toTs]`
+// range queries against the same `(session_id, ts)` indexes.
+//
+// All four functions:
+//   - clamp `limit` server-side so a hand-crafted query can't request
+//     a session's worth of rows in one shot,
+//   - default `fromTs` / `toTs` to "no bound" so the page bootstrap
+//     can ask for the full session in one call when small (flags,
+//     participants), and chunk when large (utterances, snapshots).
+//
+// Tenancy is enforced by the route's `findSessionById` lookup before
+// these are called — there's no separate org check here because the
+// session row IS the tenancy boundary (no cross-session leakage at the
+// query level).
+// ---------------------------------------------------------------------------
+
+interface RangeQueryOptions {
+  fromTs?: Date;
+  toTs?: Date;
+  limit?: number;
+}
+
+const UTTERANCE_RANGE_MAX = 10_000;
+const DECISION_RANGE_MAX = 5_000;
+const SNAPSHOT_RANGE_MAX = 1_200; // 10 min @ 2 Hz — replay rarely needs more in one chunk.
+const FLAG_RANGE_MAX = 500;
+
+function clampLimit(requested: number | undefined, fallback: number, max: number): number {
+  if (requested === undefined) return fallback;
+  if (requested <= 0) return fallback;
+  return Math.min(requested, max);
+}
+
+function tsFilter(fromTs: Date | undefined, toTs: Date | undefined): { gte?: Date; lte?: Date } {
+  const filter: { gte?: Date; lte?: Date } = {};
+  if (fromTs !== undefined) filter.gte = fromTs;
+  if (toTs !== undefined) filter.lte = toTs;
+  return filter;
+}
+
+/**
+ * Range-fetch utterances by `start_ts ∈ [fromTs, toTs]`.
+ *
+ * Used by the replay transcript panel and the per-participant speech
+ * band renderer. Returns the same `UtteranceWithSpeakerRow` shape as
+ * the live SSE backfill so the renderer logic can be shared.
+ *
+ * Default `limit` is the chunk size the page loads on first paint
+ * (5,000 rows — enough for ~5 min of dense five-way conversation).
+ * Hard cap at 10,000 to keep a single request under the Vercel
+ * function memory envelope.
+ */
+export async function listUtterancesByRange(
+  sessionId: string,
+  options: RangeQueryOptions = {},
+): Promise<UtteranceWithSpeakerRow[]> {
+  const limit = clampLimit(options.limit, 5_000, UTTERANCE_RANGE_MAX);
+  const startTs = tsFilter(options.fromTs, options.toTs);
+  const rows = await db.utterance.findMany({
+    where: {
+      sessionId,
+      ...(startTs.gte !== undefined || startTs.lte !== undefined ? { startTs } : {}),
+    },
+    orderBy: [{ startTs: 'asc' }, { id: 'asc' }],
+    take: limit,
+    select: {
+      id: true,
+      sessionId: true,
+      participantId: true,
+      text: true,
+      isFinal: true,
+      confidence: true,
+      startTs: true,
+      endTs: true,
+      participant: {
+        select: {
+          livekitIdentity: true,
+          displayName: true,
+        },
+      },
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    participantId: row.participantId,
+    participantIdentity: row.participant.livekitIdentity,
+    participantDisplayName: row.participant.displayName,
+    text: row.text,
+    isFinal: row.isFinal,
+    confidence: row.confidence,
+    startTs: row.startTs,
+    endTs: row.endTs,
+  }));
+}
+
+/**
+ * Range-fetch decisions by `ts ∈ [fromTs, toTs]`.
+ *
+ * Used by the replay timeline (color-by-action markers) and the
+ * decision detail panel. Returns the full `DecisionRow` projection
+ * including the LLM prompt + output and reason codes — the panel
+ * renders them all when a decision is selected, and re-fetching on
+ * click would add a request-per-marker round-trip nobody wants.
+ *
+ * Default `limit` is 2,000 — a 60-min session at 2 Hz produces 7,200
+ * decisions but the vast majority are `stay_silent`. A real replay
+ * filters down to executed decisions client-side; the server returns
+ * everything in window so the audit trail is complete (brief §2.2).
+ */
+export async function listDecisionsByRange(
+  sessionId: string,
+  options: RangeQueryOptions = {},
+): Promise<DecisionRow[]> {
+  const limit = clampLimit(options.limit, 2_000, DECISION_RANGE_MAX);
+  const ts = tsFilter(options.fromTs, options.toTs);
+  const rows = await db.decision.findMany({
+    where: {
+      sessionId,
+      ...(ts.gte !== undefined || ts.lte !== undefined ? { ts } : {}),
+    },
+    orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+    take: limit,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    action: row.action,
+    targetParticipantId: row.targetParticipantId,
+    source: row.source,
+    triggeringRule: row.triggeringRule,
+    researcherId: row.researcherId,
+    researcherHint: row.researcherHint,
+    reasonCodes: row.reasonCodes,
+    reasonHuman: row.reasonHuman,
+    confidence: row.confidence,
+    suppressedBy: row.suppressedBy,
+    wasExecuted: row.wasExecuted,
+    llmPrompt: row.llmPrompt as Record<string, unknown> | null,
+    llmOutput: row.llmOutput,
+    ttsAudioUrl: row.ttsAudioUrl,
+    spokenAt: row.spokenAt,
+    cooldownUntil: row.cooldownUntil,
+  }));
+}
+
+/**
+ * Range-fetch state snapshots by `ts ∈ [fromTs, toTs]`.
+ *
+ * Used by the replay state snapshot panel. Snapshots write at 2 Hz
+ * (one row per tick), so a 60-min session is 7,200 rows. The replay
+ * UI loads narrow windows around the scrubber position — default
+ * `limit` is 600 (5 minutes of context) and hard cap is 1,200 (10
+ * minutes) to keep the JSON payload below ~1 MB per request.
+ *
+ * Returns `state` as `unknown`; the state-panel component validates
+ * via the same Zod schema the SSE backfill uses, so a corrupt
+ * snapshot is dropped rather than crashing the panel.
+ */
+export async function listSnapshotsByRange(
+  sessionId: string,
+  options: RangeQueryOptions = {},
+): Promise<StateSnapshotRow[]> {
+  const limit = clampLimit(options.limit, 600, SNAPSHOT_RANGE_MAX);
+  const ts = tsFilter(options.fromTs, options.toTs);
+  const rows = await db.stateSnapshot.findMany({
+    where: {
+      sessionId,
+      ...(ts.gte !== undefined || ts.lte !== undefined ? { ts } : {}),
+    },
+    orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+    take: limit,
+    select: {
+      id: true,
+      sessionId: true,
+      tickId: true,
+      ts: true,
+      state: true,
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    state: row.state,
+  }));
+}
+
+export interface SessionFlagRow {
+  id: string;
+  sessionId: string;
+  ts: Date;
+  researcherId: string | null;
+  note: string | null;
+  autoGenerated: boolean;
+}
+
+/**
+ * Range-fetch session flags by `ts ∈ [fromTs, toTs]`.
+ *
+ * Flags are sparse (a researcher might drop a dozen bookmarks across
+ * an hour; the engine drops auto-flags for major events). Default
+ * `limit` is 200 — more than enough for a normal session — with a
+ * 500-row hard cap so a misbehaving client can't sweep the table.
+ *
+ * The replay timeline renders one marker per flag; the click handler
+ * jumps the scrubber to `ts` and pops the note in the state panel.
+ */
+export async function listSessionFlagsByRange(
+  sessionId: string,
+  options: RangeQueryOptions = {},
+): Promise<SessionFlagRow[]> {
+  const limit = clampLimit(options.limit, 200, FLAG_RANGE_MAX);
+  const ts = tsFilter(options.fromTs, options.toTs);
+  const rows = await db.sessionFlag.findMany({
+    where: {
+      sessionId,
+      ...(ts.gte !== undefined || ts.lte !== undefined ? { ts } : {}),
+    },
+    orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+    take: limit,
+    select: {
+      id: true,
+      sessionId: true,
+      ts: true,
+      researcherId: true,
+      note: true,
+      autoGenerated: true,
+    },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    ts: row.ts,
+    researcherId: row.researcherId,
+    note: row.note,
+    autoGenerated: row.autoGenerated,
   }));
 }

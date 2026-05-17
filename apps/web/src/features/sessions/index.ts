@@ -18,16 +18,25 @@ export type { PublishCommandInput } from './commands';
 export {
   findDecisionSessionId,
   findSessionById,
+  findSessionForReplay,
+  listDecisionsByRange,
   listDecisionsSince,
+  listParticipantsForSession,
   listRecentSessions,
   listRuleEvaluationsForDecision,
+  listSessionFlagsByRange,
+  listSnapshotsByRange,
   listStateSnapshotsSince,
+  listUtterancesByRange,
   listUtterancesSince,
 } from './repo';
 export type {
   DecisionRow,
   ModeratedSessionRow,
+  ParticipantRow,
+  ReplaySessionRow,
   RuleEvaluationRow,
+  SessionFlagRow,
   StateSnapshotRow,
   UtteranceWithSpeakerRow,
 } from './repo';

@@ -151,10 +151,13 @@ recordings/
 # *runtime* recording-output directory. These exceptions preserve source
 # directories that happen to share the name:
 #   - apps/web/src/features/recordings/ — web R2 client + replay UI
+#   - apps/web/src/app/api/sessions/[id]/recordings/ — signed-URL API route
 #   - services/engine/verbio_engine/recordings/ — engine egress dispatcher
 #   - services/engine/tests/recordings/ — engine egress dispatcher tests
 !apps/web/src/features/recordings/
 !apps/web/src/features/recordings/**
+!apps/web/src/app/api/sessions/\[id\]/recordings/
+!apps/web/src/app/api/sessions/\[id\]/recordings/**
 !services/engine/verbio_engine/recordings/
 !services/engine/verbio_engine/recordings/**
 !services/engine/tests/recordings/
