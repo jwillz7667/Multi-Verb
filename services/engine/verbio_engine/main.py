@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from verbio_engine import __version__
 from verbio_engine.config import Settings, load_settings
 from verbio_engine.logging import configure_logging, get_logger
+from verbio_engine.sentry import configure_sentry
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -40,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build a FastAPI app. Factory form keeps tests and uvicorn aligned."""
     settings = settings or load_settings()
     configure_logging(level=settings.log_level, json_format=settings.is_production)
+    sentry_enabled = configure_sentry(settings)
     log = get_logger(__name__)
 
     @asynccontextmanager
@@ -49,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             version=__version__,
             environment=settings.environment,
             tick_interval_ms=settings.tick_interval_ms,
+            sentry=sentry_enabled,
         )
         yield
         log.info("engine.shutdown")

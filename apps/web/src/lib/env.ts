@@ -88,6 +88,21 @@ const serverSchema = clientSchema.extend({
   // when the var is missing so we don't accidentally expose an
   // unauthenticated retention sweep.
   CRON_SECRET: optionalSecret,
+
+  // Sentry — all three optional. With DSN unset, the logger and
+  // `instrumentation.ts` no-op; this keeps local dev + tests from
+  // needing a real ingest URL while production sets all three.
+  // `SENTRY_ENVIRONMENT` defaults to `NODE_ENV` when missing.
+  // `SENTRY_TRACES_SAMPLE_RATE` is a float 0–1; 0 disables performance
+  // tracing (cheaper) while events still flow.
+  SENTRY_DSN: optionalUrl,
+  SENTRY_ENVIRONMENT: optionalSecret,
+  SENTRY_TRACES_SAMPLE_RATE: emptyAsUndefined.pipe(z.coerce.number().min(0).max(1).optional()),
+
+  // Log verbosity override. Honoured by `lib/logger.ts`. Defaults to
+  // `info` in production, `debug` outside. Useful for turning down
+  // chatter on a noisy prod box without a redeploy.
+  LOG_LEVEL: emptyAsUndefined.pipe(z.enum(['debug', 'info', 'warn', 'error']).optional()),
 });
 
 export type ClientEnv = z.infer<typeof clientSchema>;

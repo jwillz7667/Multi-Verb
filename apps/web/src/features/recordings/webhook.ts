@@ -49,6 +49,7 @@ import { EgressStatus } from 'livekit-server-sdk';
 import { Prisma } from '@/generated/prisma';
 import type { PrismaClient } from '@/generated/prisma';
 import { db } from '@/lib/db';
+import { logger as rootLogger } from '@/lib/logger';
 
 import type { WebhookEvent } from 'livekit-server-sdk';
 
@@ -300,18 +301,8 @@ export function createPrismaWebhookRecordingsRepo(client: PrismaClient): Webhook
 export const defaultWebhookRecordingsRepo: WebhookRecordingsRepo =
   createPrismaWebhookRecordingsRepo(db);
 
-// The web app's eslint preset whitelists `console.warn` + `console.error`
-// only. Webhook info/debug breadcrumbs go through `console.warn` so they
-// surface in Vercel logs without violating the preset; ops can grep by
-// the `livekit_webhook.` prefix to separate progress from real warnings.
-const consoleLogger: ProcessLogger = {
-  info: (msg, ctx) => {
-    console.warn(msg, ctx);
-  },
-  warn: (msg, ctx) => {
-    console.warn(msg, ctx);
-  },
-  debug: (msg, ctx) => {
-    console.warn(msg, ctx);
-  },
-};
+// Production-default logger when callers don't inject one. Wraps the
+// shared structured logger from `lib/logger.ts` so info/debug land at
+// their honest levels (rather than being smuggled through warn to
+// dodge the no-console preset).
+const consoleLogger: ProcessLogger = rootLogger.child({ component: 'recordings.webhook' });

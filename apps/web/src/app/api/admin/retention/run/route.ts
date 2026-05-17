@@ -23,13 +23,9 @@
 
 import { NextResponse } from 'next/server';
 
-import {
-  createPrismaRetentionRepo,
-  defaultR2KeyDeleter,
-  runRetention,
-  type RetentionLogger,
-} from '@/features/retention';
+import { createPrismaRetentionRepo, defaultR2KeyDeleter, runRetention } from '@/features/retention';
 import { serverEnv } from '@/lib/env';
+import { logger as rootLogger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,23 +50,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  // `console`-backed logger keeps structured events flowing into
-  // Vercel's log drain; tests inject a vi.fn via the runner directly,
-  // so the production route doesn't need DI here. The project's
-  // `no-console` rule allows only `warn`/`error`, so info events route
-  // through `console.warn` — they're operationally interesting (daily
-  // sweep results) so the level is defensible either way.
-  const logger: RetentionLogger = {
-    info: (message, fields) => {
-      console.warn(`[retention] ${message}`, fields ?? {});
-    },
-    warn: (message, fields) => {
-      console.warn(`[retention] ${message}`, fields ?? {});
-    },
-    error: (message, fields) => {
-      console.error(`[retention] ${message}`, fields ?? {});
-    },
-  };
+  // Child binding so every retention sweep line carries `component`
+  // for easy log-explorer filtering, on top of the runner's existing
+  // `retention.*` event names.
+  const logger = rootLogger.child({ component: 'retention' });
 
   const repo = createPrismaRetentionRepo();
   const result = await runRetention(repo, defaultR2KeyDeleter, { logger });

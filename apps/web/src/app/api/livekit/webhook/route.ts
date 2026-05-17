@@ -31,9 +31,12 @@ import {
   verifyWebhookEvent,
   WebhookSignatureError,
 } from '@/features/recordings';
+import { logger as rootLogger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const log = rootLogger.child({ component: 'livekit.webhook' });
 
 export async function POST(request: Request): Promise<NextResponse> {
   // Raw body — verification recomputes HMAC over the exact bytes the
@@ -47,11 +50,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     event = await verifyWebhookEvent(rawBody, authHeader);
   } catch (err) {
     if (err instanceof LiveKitWebhookNotConfiguredError) {
-      console.error('livekit_webhook.creds_missing', { missing: err.missing });
+      log.error('livekit_webhook.creds_missing', { missing: err.missing });
       return NextResponse.json({ error: 'webhook_not_configured' }, { status: 503 });
     }
     if (err instanceof WebhookSignatureError) {
-      console.warn('livekit_webhook.signature_failed', { reason: err.reason });
+      log.warn('livekit_webhook.signature_failed', { reason: err.reason });
       return NextResponse.json({ error: 'invalid_signature' }, { status: 401 });
     }
     throw err;
@@ -63,12 +66,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     return NextResponse.json({ ok: true, result });
   } catch (err) {
-    // Don't 5xx LiveKit for transient DB errors quietly — log loud,
-    // then return 500 so the webhook delivery retries with backoff.
-    console.error('livekit_webhook.processor_error', {
+    // Don't 5xx LiveKit for transient DB errors quietly — log loud
+    // (with the underlying Error so Sentry gets a stack), then return
+    // 500 so the webhook delivery retries with backoff.
+    const wrapped = err instanceof Error ? err : new Error(String(err));
+    log.error('livekit_webhook.processor_error', wrapped, {
       event: event.event,
       egressId: event.egressInfo?.egressId,
-      error: err instanceof Error ? err.message : String(err),
     });
     return NextResponse.json({ error: 'processor_error' }, { status: 500 });
   }

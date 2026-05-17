@@ -43,6 +43,11 @@ dependencies = [
   # response without us re-implementing SSE framing.
   "httpx>=0.28.0,<0.29",
   "httpx-sse>=0.4.0,<0.5",
+  # Sentry SDK — optional at runtime (init no-ops without DSN) but a
+  # hard dep on the worker so `import sentry_sdk` always resolves.
+  # FastAPI extra wires the ASGI middleware Vercel-side runs against
+  # the FastAPI admin app exposed by main.py.
+  "sentry-sdk[fastapi]>=2.18.0,<3",
 ]
 
 [project.optional-dependencies]

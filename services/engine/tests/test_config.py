@@ -107,3 +107,31 @@ def test_openai_overrides_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.openai_api_key.get_secret_value() == "sk-test-xxxxx"
     assert s.openai_embedding_model == "text-embedding-3-large"
     assert s.openai_base_url == "https://proxy.example/v1"
+
+
+def test_sentry_defaults_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # DSN absence is the disable switch; `configure_sentry` becomes a
+    # no-op so dev/test boots don't require a real ingest URL.
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)
+    s = load_settings()
+
+    assert s.sentry_dsn is None
+    assert s.sentry_traces_sample_rate == 0.0
+
+
+def test_sentry_overrides_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SENTRY_DSN", "https://public@example.ingest.sentry.io/1")
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.5")
+
+    s = load_settings()
+
+    assert isinstance(s.sentry_dsn, SecretStr)
+    assert s.sentry_dsn.get_secret_value() == "https://public@example.ingest.sentry.io/1"
+    assert s.sentry_traces_sample_rate == 0.5
+
+
+def test_sentry_sample_rate_must_be_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "1.5")
+    with pytest.raises(ValidationError):
+        load_settings()

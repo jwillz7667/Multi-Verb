@@ -45,6 +45,7 @@ from verbio_engine.recordings import (
     r2_config_from_settings,
 )
 from verbio_engine.rules import build_v1_registry
+from verbio_engine.sentry import configure_sentry
 
 if TYPE_CHECKING:
     from livekit.agents import stt as agents_stt
@@ -338,6 +339,10 @@ def run_worker() -> None:
     """
     settings = load_settings()
     configure_logging(level=settings.log_level, json_format=settings.is_production)
+    # Initialise Sentry before the LiveKit SDK assertions so a missing
+    # LiveKit cred ALSO surfaces in Sentry (boot-time misconfig is one
+    # of the more common failure modes for a fresh deploy).
+    configure_sentry(settings)
 
     # Validate LiveKit credentials at boot — the SDK's own error if
     # missing is a generic AssertionError deep in the worker, which is

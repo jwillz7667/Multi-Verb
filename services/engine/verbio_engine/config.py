@@ -102,6 +102,19 @@ class Settings(BaseSettings):
     # ----- Service name (for observability) --------------------------------
     service_name: str = Field(default="verbio-engine", alias="OTEL_SERVICE_NAME_ENGINE")
 
+    # ----- Sentry (Phase 7: error reporting) -------------------------------
+    # DSN absence is the disable switch — `configure_sentry()` becomes a
+    # no-op, so dev/test environments don't need a real ingest URL.
+    # `traces_sample_rate` is a float in [0, 1]; 0 disables performance traces
+    # while error events still flow. Matches the web-side env contract.
+    sentry_dsn: SecretStr | None = Field(default=None, alias="SENTRY_DSN")
+    sentry_traces_sample_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        alias="SENTRY_TRACES_SAMPLE_RATE",
+    )
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

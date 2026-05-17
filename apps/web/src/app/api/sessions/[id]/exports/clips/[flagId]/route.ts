@@ -40,7 +40,10 @@ import { R2NotConfiguredError, signGetUrl } from '@/features/recordings';
 import { findSessionFlagById, findSessionForReplay } from '@/features/sessions';
 import { auth } from '@/lib/auth';
 import { orgIdForUser } from '@/lib/identity';
+import { logger as rootLogger } from '@/lib/logger';
 import { scopedDb } from '@/lib/scoped-db';
+
+const log = rootLogger.child({ component: 'exports.clip' });
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -123,9 +126,12 @@ export async function GET(
   void done.then(async (code) => {
     if (code !== 0) {
       const stderrTail = await stderr;
-      console.error(
-        `[clip-export] ffmpeg exit=${String(code)} session=${sessionId} flag=${flagId} stderr=${stderrTail}`,
-      );
+      log.error('clip_export.ffmpeg_failed', {
+        exitCode: code,
+        sessionId,
+        flagId,
+        stderrTail,
+      });
     }
   });
 
