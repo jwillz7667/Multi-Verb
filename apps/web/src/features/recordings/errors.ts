@@ -26,3 +26,38 @@ export class R2KeyInvalidError extends Error {
     this.name = 'R2KeyInvalidError';
   }
 }
+
+/**
+ * Raised when the LiveKit webhook endpoint is reachable but the API
+ * credentials needed to verify signatures aren't configured. The route
+ * surfaces this as 503 so LiveKit's webhook delivery layer retries —
+ * a missing secret is an ops-config issue, not a permanent rejection.
+ */
+export class LiveKitWebhookNotConfiguredError extends Error {
+  readonly missing: readonly string[];
+
+  constructor(missing: readonly string[]) {
+    super(
+      `LiveKit webhook receiver is not configured. Missing env vars: ${missing.join(', ')}. ` +
+        `Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET to verify inbound webhook signatures.`,
+    );
+    this.name = 'LiveKitWebhookNotConfiguredError';
+    this.missing = missing;
+  }
+}
+
+/**
+ * Raised when the inbound webhook body fails HMAC verification. The
+ * route surfaces this as 401 so the caller knows the signature didn't
+ * line up — most often a stale or wrong `LIVEKIT_API_SECRET`. We don't
+ * leak verifier details in the public response body.
+ */
+export class WebhookSignatureError extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`LiveKit webhook signature verification failed: ${reason}`);
+    this.name = 'WebhookSignatureError';
+    this.reason = reason;
+  }
+}

@@ -7,5 +7,23 @@
  * through this barrel.
  */
 
-export { R2KeyInvalidError, R2NotConfiguredError } from './errors';
+export {
+  LiveKitWebhookNotConfiguredError,
+  R2KeyInvalidError,
+  R2NotConfiguredError,
+  WebhookSignatureError,
+} from './errors';
 export { getR2Client, sessionObjectKey, signGetUrl } from './r2';
+export {
+  createPrismaWebhookRecordingsRepo,
+  defaultWebhookRecordingsRepo,
+  processEgressWebhookEvent,
+} from './webhook';
+export type {
+  IgnoreReason,
+  ProcessDeps,
+  ProcessLogger,
+  ProcessResult,
+  WebhookRecordingsRepo,
+} from './webhook';
+export { getWebhookReceiver, verifyWebhookEvent } from './webhook-receiver';
