@@ -31,6 +31,7 @@
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
+import { ReplayAudioPlayer } from './replay-audio-player';
 import { ReplayTimeline } from './replay-timeline';
 
 import type { ReplayBootstrap } from './replay-types';
@@ -136,17 +137,16 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
         </section>
 
         {/*
-          L6 — audio player + scrubber sync. Composite playback uses
-          GET /api/sessions/[id]/recordings/audio (no participant arg);
-          per-participant tracks add ?participant=<identity>. The
-          placeholder makes the affordance visible to QA without yet
-          mounting an <audio> element.
+          L6 — audio player + scrubber sync. Composite playback only;
+          per-participant track selection ships in L9 alongside the
+          filter bar. The player fetches its own signed URL from
+          GET /api/sessions/[id]/recordings/audio on mount.
         */}
         <section
-          className="border-border-default bg-surface-primary flex items-center justify-between rounded-lg border px-6 py-4"
+          className="border-border-default bg-surface-primary flex flex-col gap-2 rounded-lg border px-6 py-4"
           data-testid="replay-audio-slot"
         >
-          <div className="flex flex-col">
+          <div className="flex items-center justify-between">
             <span className="text-text-primary text-sm font-medium">Audio</span>
             <span className="text-text-tertiary text-xs">
               {session.has_composite_recording
@@ -156,14 +156,14 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
                   : 'no recording yet — egress may still be running'}
             </span>
           </div>
-          <button
-            type="button"
-            className="border-border-default text-text-secondary hover:bg-surface-tertiary cursor-not-allowed rounded-md border px-3 py-1.5 text-xs"
-            disabled
-            data-testid="replay-audio-play"
-          >
-            ▶︎ Play · P6 L6
-          </button>
+          <ReplayAudioPlayer
+            sessionId={session.id}
+            hasCompositeRecording={session.has_composite_recording}
+            sessionStart={session.actual_start}
+            sessionEnd={session.actual_end}
+            currentTs={currentTs}
+            onSeek={handleSeek}
+          />
         </section>
 
         {/*
