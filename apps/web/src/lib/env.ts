@@ -20,14 +20,26 @@
 
 import { z } from 'zod';
 
-const optionalSecret = z.string().min(1).optional();
-const requiredSecret = (label: string): z.ZodString =>
-  z.string({ required_error: `${label} is required` }).min(1, `${label} must not be empty`);
+// `.env` placeholder files commonly set optional vars to an empty
+// string. Treat empty strings as "absent" so `.optional()` actually
+// works the way you'd expect — otherwise a placeholder line like
+// `AUTH_RESEND_KEY=` would fail `min(1)` validation at boot.
+const emptyAsUndefined = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.unknown(),
+);
+const optionalSecret = emptyAsUndefined.pipe(z.string().min(1).optional());
+const requiredSecret = (label: string) =>
+  emptyAsUndefined.pipe(
+    z.string({ required_error: `${label} is required` }).min(1, `${label} must not be empty`),
+  );
 
-const url = (label: string): z.ZodString =>
-  z.string({ required_error: `${label} is required` }).url(`${label} must be a valid URL`);
+const url = (label: string) =>
+  emptyAsUndefined.pipe(
+    z.string({ required_error: `${label} is required` }).url(`${label} must be a valid URL`),
+  );
 
-const optionalUrl = z.string().url().optional();
+const optionalUrl = emptyAsUndefined.pipe(z.string().url().optional());
 
 const clientSchema = z.object({
   NEXT_PUBLIC_APP_URL: url('NEXT_PUBLIC_APP_URL'),
