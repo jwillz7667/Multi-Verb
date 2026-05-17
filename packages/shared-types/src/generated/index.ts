@@ -4,6 +4,7 @@
  */
 
 export type { ModeratorDecision } from './moderator-decision.js';
+export type { ModeratorPersona } from './moderator-persona.js';
 export type { ParticipantState } from './participant-state.js';
 export type { QuietnessBudget } from './quietness-budget.js';
 export type { ResearcherCommand } from './researcher-command.js';

@@ -116,6 +116,9 @@ model ModeratedSession {
   perParticipantRecordingUrls Json?     @map("per_participant_recording_urls") @db.JsonB
   createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  // Nullable FK so a study purge keeps historical sessions intact —
+  // their `configSnapshot` is the authoritative record at that point.
+  study          Study?          @relation(fields: [studyId], references: [id], onDelete: SetNull, map: "fk_sessions_study_id_studies")
   participants   Participant[]
   utterances     Utterance[]
   stateSnapshots StateSnapshot[]
@@ -238,4 +241,43 @@ model RuleEvaluation {
 
   @@index([decisionId], map: "ix_rule_evaluations_decision_id")
   @@map("rule_evaluations")
+}
+
+// ============================================================================
+// Studies — reusable session configurations (brief §10.1, §7.5).
+// Mirror of Alembic migration 0006_studies_table (engine side).
+//
+// A study bundles the research prompt, the rules config + version, the
+// moderator persona, and the retention policy. At session start the
+// engine snapshots these into `sessions.config_snapshot` so replay
+// reads the frozen bundle, not the live row (a researcher editing a
+// study tomorrow must not retroactively change yesterday's session).
+//
+// `prompt_embedding` is deferred — pgvector isn't installed yet, and
+// the topic_drift rule re-embeds in-process. Stored as JSONB so a
+// future migration can either populate it or drop the column without
+// a data-loss path.
+// ============================================================================
+
+model Study {
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  name             String
+  prompt           String
+  // Deferred pgvector column — see Alembic 0006 docstring.
+  promptEmbedding  Json?    @map("prompt_embedding") @db.JsonB
+  rulesConfig      Json     @default("{}") @map("rules_config") @db.JsonB
+  rulesVersion     String   @map("rules_version")
+  moderatorPersona Json     @default("{}") @map("moderator_persona") @db.JsonB
+  retentionPolicy  Json     @default("{}") @map("retention_policy") @db.JsonB
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Auth.js user UUID; not an FK because the engine doesn't own the
+  // users table and the web service can recreate Auth.js tables out
+  // of band. Storing the raw UUID preserves audit without coupling.
+  createdBy        String   @map("created_by") @db.Uuid
+
+  sessions ModeratedSession[]
+
+  @@index([orgId], map: "ix_studies_org_id")
+  @@map("studies")
 }

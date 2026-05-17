@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "description": "Frozen persona configuration for one study.",
+  "properties": {
+    "formality": {
+      "default": "neutral",
+      "description": "How conversational the phrasing should feel.",
+      "enum": [
+        "casual",
+        "neutral",
+        "formal"
+      ],
+      "title": "Formality",
+      "type": "string"
+    },
+    "style_prompt": {
+      "description": "Persona-flavored prefix prepended to the §8.2 system message. Keep short (1-2 sentences). Avoid prescribing what the moderator says — that is the engine's job, not the persona.",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Style Prompt",
+      "type": "string"
+    },
+    "tone": {
+      "default": "warm",
+      "description": "Base affective register; combined with per-action hints.",
+      "enum": [
+        "warm",
+        "neutral",
+        "professional"
+      ],
+      "title": "Tone",
+      "type": "string"
+    },
+    "voice_id": {
+      "description": "Provider-specific voice id; picked from the curated library.",
+      "minLength": 1,
+      "title": "Voice Id",
+      "type": "string"
+    },
+    "voice_provider": {
+      "default": "cartesia",
+      "description": "TTS provider whose voice library owns `voice_id`.",
+      "enum": [
+        "cartesia",
+        "elevenlabs"
+      ],
+      "title": "Voice Provider",
+      "type": "string"
+    }
+  },
+  "required": [
+    "style_prompt",
+    "voice_id"
+  ],
+  "title": "ModeratorPersona",
+  "type": "object"
+}

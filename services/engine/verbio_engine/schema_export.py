@@ -29,6 +29,7 @@ from verbio_engine.domain import (
     RulesConfig,
     SessionState,
 )
+from verbio_engine.mouth.persona import ModeratorPersona
 from verbio_engine.realtime import TranscriptEvent, TranscriptEventAdapter
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ EXPORTED_MODELS: tuple[tuple[str, str, _Schemable], ...] = cast(
         ("rules_config", "RulesConfig", RulesConfig),
         ("researcher_command", "ResearcherCommand", ResearcherCommand),
         ("quietness_budget", "QuietnessBudget", QuietnessBudget),
+        ("moderator_persona", "ModeratorPersona", ModeratorPersona),
         # TranscriptEvent is a discriminated union (TypeAlias), so its schema
         # comes from the TypeAdapter rather than a class method, and the
         # title is injected explicitly below.
