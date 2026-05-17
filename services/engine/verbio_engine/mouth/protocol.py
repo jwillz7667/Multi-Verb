@@ -30,10 +30,17 @@ class MouthRequest:
 
 @dataclass(frozen=True)
 class MouthChunk:
-    """One streamed piece of the moderator's utterance."""
+    """One streamed piece of the moderator's utterance.
+
+    `from_fallback` lets the orchestrator set `llm_fallback=true` on the
+    decision per brief §8.4 without inspecting which implementation it
+    called. Default False; TemplatedMouth and the DeepSeekMouth's
+    fallback path both set it to True on every chunk they emit.
+    """
 
     text: str
     is_final: bool = False
+    from_fallback: bool = False
 
 
 @runtime_checkable

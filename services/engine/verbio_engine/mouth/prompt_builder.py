@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from verbio_engine.domain.decision import DecisionAction, ModeratorDecision
+from verbio_engine.domain.decision import DecisionAction
 from verbio_engine.mouth.context import PhrasingContext
 from verbio_engine.mouth.persona import ModeratorPersona
 
@@ -38,19 +38,25 @@ _ACTION_TONE: dict[DecisionAction, str] = {
 
 
 def build_prompt(
-    decision: ModeratorDecision,
+    action: DecisionAction,
     persona: ModeratorPersona,
     context: PhrasingContext,
 ) -> dict[str, Any]:
-    """Return the §8.2 prompt JSON for `decision`.
+    """Return the §8.2 prompt JSON for `action`.
+
+    Takes the action directly (not the full `ModeratorDecision`) — the
+    prompt only depends on what the moderator should *do*, never on
+    decision provenance or audit metadata. Keeps the §8.1 boundary
+    sharper: any caller that has an action + persona + context can
+    build the prompt, no decision required.
 
     Raises:
-        ValueError: when `decision.action` is `stay_silent` or
-            `close_session` — neither reaches the mouth.
+        ValueError: when `action` is `stay_silent` or `close_session` —
+            neither reaches the mouth.
     """
-    if decision.action in ("stay_silent", "close_session"):
+    if action in ("stay_silent", "close_session"):
         raise ValueError(
-            f"build_prompt invoked with action={decision.action!r}; "
+            f"build_prompt invoked with action={action!r}; "
             "the mouth layer is not invoked for stay_silent or close_session"
         )
 
@@ -65,11 +71,11 @@ def build_prompt(
         context_payload["target_engagement_note"] = context.target_engagement_note
 
     user_payload: dict[str, Any] = {
-        "intervention": decision.action,
+        "intervention": action,
         "constraints": {
             "max_sentences": 1,
             "address_target_by_name": context.target_display_name is not None,
-            "tone": _tone_descriptor(persona, decision.action),
+            "tone": _tone_descriptor(persona, action),
         },
     }
     if context.target_display_name is not None:
