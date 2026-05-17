@@ -32,8 +32,7 @@ RUN apt-get update \
 FROM base AS deps
 
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,id=verbio-engine-uv,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev
 
 # ---------------------------------------------------------------------------
 # Runtime stage — install the project itself, then drop dev tooling.
@@ -43,8 +42,7 @@ FROM deps AS runtime
 COPY verbio_engine ./verbio_engine
 COPY README.md ./README.md
 
-RUN --mount=type=cache,id=verbio-engine-uv,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 # Drop privileges. Railway honours USER directives.
 RUN groupadd --system --gid 1001 verbio \
