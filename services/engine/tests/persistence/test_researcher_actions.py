@@ -36,23 +36,33 @@ def _make_session(session_id: uuid.UUID) -> Session:
     )
 
 
+# Sentinel so callers can distinguish "use the default payload" (omit kwarg)
+# from "actually persist NULL" (`payload=None`).
+_PAYLOAD_DEFAULT: dict[str, object] = {"budget": 2}
+_UNSET: object = object()
+
+
 def _make_action_insert(
     *,
     session_id: uuid.UUID,
     command_id: uuid.UUID | None = None,
     researcher_id: uuid.UUID | None = None,
     command_type: str = "set_quietness_budget",
-    payload: dict[str, object] | None = None,
+    payload: dict[str, object] | None | object = _UNSET,
     resulting_decision_id: uuid.UUID | None = None,
     ts: datetime | None = None,
 ) -> ResearcherActionInsert:
+    if payload is _UNSET:
+        resolved_payload: dict[str, object] | None = dict(_PAYLOAD_DEFAULT)
+    else:
+        resolved_payload = payload  # type: ignore[assignment]
     return ResearcherActionInsert(
         command_id=command_id or uuid.uuid4(),
         session_id=session_id,
         researcher_id=researcher_id or uuid.uuid4(),
         ts=ts or datetime.now(UTC),
         command_type=command_type,
-        payload=payload if payload is not None else {"budget": 2},
+        payload=resolved_payload,
         resulting_decision_id=resulting_decision_id,
     )
 

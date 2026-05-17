@@ -61,12 +61,19 @@ Anything beyond the cap is read on the next tick — drift over a sustained
 burst is at most `interval_sec` per excess command.
 """
 
-_DEFAULT_BLOCK_MS = 0
+_DEFAULT_BLOCK_MS: int | None = None
 """XREAD BLOCK milliseconds.
 
-`0` = non-blocking; XREAD returns immediately if no new entries are
-available. The tick scheduler owns the cadence, so we never want the
-Redis read to block past `now()`.
+`None` = non-blocking; redis-py omits the `BLOCK` argument entirely so
+XREAD returns immediately when no new entries are available. The tick
+scheduler owns the cadence, so we never want the Redis read to block
+past `now()`.
+
+NOTE: Redis `XREAD BLOCK 0` does NOT mean "non-blocking" — it means
+block *indefinitely* waiting for new entries. Passing `block=0` to
+redis-py's XREAD would deadlock the tick loop the first time it
+drains an empty stream. The only way to express "return immediately"
+is to omit the BLOCK arg, which redis-py keys off `block is None`.
 """
 
 _INITIAL_CURSOR = b"0"
@@ -117,7 +124,7 @@ class RedisCommandStreamBus:
         url: str,
         *,
         max_per_drain: int = _DEFAULT_DRAIN_COUNT,
-        block_ms: int = _DEFAULT_BLOCK_MS,
+        block_ms: int | None = _DEFAULT_BLOCK_MS,
     ) -> None:
         """Store the connection URL; connection is opened lazily.
 

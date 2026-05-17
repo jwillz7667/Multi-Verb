@@ -79,9 +79,12 @@ async def test_drain_decodes_and_advances_cursor(monkeypatch: pytest.MonkeyPatch
         streams: dict[bytes, bytes],
         *,
         count: int,
-        block: int,
+        block: int | None,
     ) -> list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]] | None:
-        _ = count, block
+        _ = count
+        # Regression guard: `block=None` is the only mode that doesn't
+        # deadlock an empty-stream drain (Redis `BLOCK 0` blocks forever).
+        assert block is None, f"drain must pass block=None, got {block!r}"
         calls.append(streams)
         cursor = streams[key]
         if cursor == b"0":
