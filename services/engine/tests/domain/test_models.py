@@ -8,6 +8,7 @@ source of truth for the shapes; this file is the executable form of it.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -22,6 +23,7 @@ from verbio_engine.domain import (
     RuleEvaluation,
     UtteranceRef,
 )
+from verbio_engine.domain.command import ResearcherCommandType
 
 
 def _now() -> datetime:
@@ -195,6 +197,137 @@ def test_researcher_command_payload_defaults_empty() -> None:
     )
 
     assert cmd.payload == {}
+
+
+# ---------------------------------------------------------------------------
+# ResearcherCommand — typed payload validation (brief §5.4 + Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _cmd(command_type: ResearcherCommandType, payload: dict[str, Any]) -> ResearcherCommand:
+    """Helper — build a ResearcherCommand with the boring fields filled in."""
+    return ResearcherCommand(
+        command_id=uuid4(),
+        session_id=uuid4(),
+        researcher_id="r-1",
+        issued_at=_now(),
+        command_type=command_type,
+        payload=payload,
+    )
+
+
+@pytest.mark.parametrize(
+    "command_type",
+    [
+        "mute_moderator",
+        "unmute_moderator",
+        "pause_session",
+        "resume_session",
+    ],
+)
+def test_no_payload_commands_accept_empty_dict(command_type: ResearcherCommandType) -> None:
+    # Control-plane toggles take no payload; an empty dict is the canonical wire form.
+    cmd = _cmd(command_type, {})
+    assert cmd.payload == {}
+
+
+@pytest.mark.parametrize(
+    "command_type",
+    [
+        "mute_moderator",
+        "unmute_moderator",
+        "pause_session",
+        "resume_session",
+    ],
+)
+def test_no_payload_commands_reject_extra_keys(command_type: ResearcherCommandType) -> None:
+    # extra='forbid' on the payload model surfaces typos before they reach the engine.
+    with pytest.raises(ValidationError):
+        _cmd(command_type, {"unexpected_field": True})
+
+
+def test_force_prompt_payload_requires_prompt_text() -> None:
+    with pytest.raises(ValidationError):
+        _cmd("force_prompt", {})
+
+
+def test_force_prompt_payload_rejects_empty_prompt() -> None:
+    with pytest.raises(ValidationError):
+        _cmd("force_prompt", {"prompt": ""})
+
+
+def test_force_prompt_payload_accepts_target_participant() -> None:
+    target_id = uuid4()
+    cmd = _cmd("force_prompt", {"prompt": "ask Maria why", "target_participant_id": str(target_id)})
+    # Wire is JSON: dict survives unchanged; engine handlers parse it typed.
+    assert cmd.payload["prompt"] == "ask Maria why"
+    assert cmd.payload["target_participant_id"] == str(target_id)
+
+
+def test_force_redirect_requires_topic() -> None:
+    with pytest.raises(ValidationError):
+        _cmd("force_redirect", {})
+
+    cmd = _cmd("force_redirect", {"topic": "pricing concerns"})
+    assert cmd.payload == {"topic": "pricing concerns"}
+
+
+def test_force_summary_focus_is_optional() -> None:
+    # No focus is valid: summarises the whole discussion.
+    assert _cmd("force_summary", {}).payload == {}
+    cmd = _cmd("force_summary", {"focus": "the pricing pushback"})
+    assert cmd.payload["focus"] == "the pricing pushback"
+
+
+def test_whisper_requires_text() -> None:
+    with pytest.raises(ValidationError):
+        _cmd("whisper", {})
+
+    cmd = _cmd("whisper", {"text": "the floor is yours, Maria"})
+    assert cmd.payload["text"] == "the floor is yours, Maria"
+
+
+def test_set_quietness_budget_requires_at_least_one_field() -> None:
+    # An empty patch is ambiguous and would silently no-op — reject it.
+    with pytest.raises(ValidationError):
+        _cmd("set_quietness_budget", {})
+
+
+def test_set_quietness_budget_accepts_partial_patch() -> None:
+    cmd = _cmd("set_quietness_budget", {"max_utterances_per_10min": 5})
+    assert cmd.payload == {"max_utterances_per_10min": 5}
+
+
+def test_set_quietness_budget_rejects_negative_floor() -> None:
+    with pytest.raises(ValidationError):
+        _cmd("set_quietness_budget", {"min_seconds_between_utterances": -1.0})
+
+
+def test_set_quietness_budget_rejects_zero_max_utterances() -> None:
+    # Mirrors QuietnessBudget's PositiveInt — zero would silence the moderator
+    # forever and is better expressed via mute_moderator.
+    with pytest.raises(ValidationError):
+        _cmd("set_quietness_budget", {"max_utterances_per_10min": 0})
+
+
+def test_flag_moment_note_is_optional() -> None:
+    assert _cmd("flag_moment", {}).payload == {}
+    cmd = _cmd("flag_moment", {"note": "interesting reaction here"})
+    assert cmd.payload["note"] == "interesting reaction here"
+
+
+def test_end_session_reason_is_optional() -> None:
+    assert _cmd("end_session", {}).payload == {}
+    cmd = _cmd("end_session", {"reason": "researcher ended early"})
+    assert cmd.payload["reason"] == "researcher ended early"
+
+
+def test_command_is_frozen() -> None:
+    # ResearcherCommand carries a researcher_id; making it mutable would be
+    # an audit-trail hole. Confirm the frozen marker on model_config holds.
+    cmd = _cmd("pause_session", {})
+    with pytest.raises(ValidationError):
+        cmd.researcher_id = "r-2"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

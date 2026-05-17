@@ -13,6 +13,8 @@ Public surface:
   - `StateSnapshot`         : state_snapshots table model (P2 L3)
   - `Decision`              : decisions table model (P3 L9)
   - `RuleEvaluation`        : rule_evaluations table model (P3 L9)
+  - `ResearcherAction`      : researcher_actions table model (P5 L1)
+  - `SessionFlag`           : session_flags table model (P5 L1)
   - `create_engine`         : async engine factory
   - `session_factory`       : async sessionmaker factory
   - `SessionRepo`           : lifecycle API for sessions
@@ -42,8 +44,10 @@ from verbio_engine.persistence.engine import (
 from verbio_engine.persistence.models import (
     Decision,
     Participant,
+    ResearcherAction,
     RuleEvaluation,
     Session,
+    SessionFlag,
     StateSnapshot,
     Study,
     Utterance,
@@ -82,10 +86,12 @@ __all__ = [
     "Participant",
     "ParticipantJoin",
     "ParticipantRepo",
+    "ResearcherAction",
     "RuleEvaluation",
     "RuleEvaluationInsert",
     "RuleEvaluationRepo",
     "Session",
+    "SessionFlag",
     "SessionRepo",
     "StateSnapshot",
     "StateSnapshotInsert",

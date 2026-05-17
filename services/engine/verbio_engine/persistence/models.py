@@ -1,14 +1,16 @@
-"""ORM models for verbio-engine — Phase 1 + Phase 2 + Phase 3 subset.
+"""ORM models for verbio-engine — Phase 1 through Phase 5 subset.
 
 Mirrors the Postgres schema in brief §10.1. Tables introduced so far:
 
-  - studies          : reusable session configuration (Phase 3 L11)
-  - sessions         : one row per moderated session (Phase 1)
-  - participants     : one row per joined participant (Phase 1)
-  - utterances       : final + interim STT outputs with timing (Phase 1)
-  - state_snapshots  : full SessionState frozen every tick (Phase 2 L3)
-  - decisions        : one row per tick — the action chosen or stay_silent (Phase 3 L9)
-  - rule_evaluations : one row per rule per tick — fired or not (Phase 3 L9)
+  - studies             : reusable session configuration (Phase 3 L11)
+  - sessions            : one row per moderated session (Phase 1)
+  - participants        : one row per joined participant (Phase 1)
+  - utterances          : final + interim STT outputs with timing (Phase 1)
+  - state_snapshots     : full SessionState frozen every tick (Phase 2 L3)
+  - decisions           : one row per tick — action chosen or stay_silent (Phase 3 L9)
+  - rule_evaluations    : one row per rule per tick — fired or not (Phase 3 L9)
+  - researcher_actions  : researcher-issued commands (Phase 5 L1)
+  - session_flags       : researcher / auto-generated bookmarks (Phase 5 L1)
 
 `sessions.study_id` is nullable so standalone Phase 1-2 sessions stay
 creatable; production traffic always attaches a study (web enforces
@@ -474,3 +476,98 @@ class RuleEvaluation(Base):
     decision: Mapped[Decision] = relationship(back_populates="evaluations")
 
     __table_args__ = (Index("ix_rule_evaluations_decision_id", "decision_id"),)
+
+
+class ResearcherAction(Base):
+    """A researcher-issued command, persisted for the audit trail.
+
+    Every command from §5.4 lands here regardless of whether it produced
+    a spoken decision. Non-spoken control-plane commands (mute, pause,
+    set_quietness_budget, flag_moment) leave `resulting_decision_id`
+    null; force_prompt / force_redirect / force_summary / whisper link
+    back to the `decisions` row they produced so the dashboard can
+    distinguish auto vs. researcher-driven interventions.
+
+    `researcher_id` is the Auth.js user UUID from the web service. No FK
+    because the engine doesn't own the users table — same pattern as
+    `studies.created_by`.
+    """
+
+    __tablename__ = "researcher_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    researcher_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+    )
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+    )
+    command_type: Mapped[str] = mapped_column(Text(), nullable=False)
+    payload: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(),
+        nullable=True,
+    )
+    resulting_decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("decisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        # Dashboard's "what happened in this session?" scan is (session_id, ts).
+        Index("ix_researcher_actions_session_id_ts", "session_id", "ts"),
+    )
+
+
+class SessionFlag(Base):
+    """A bookmark on a session moment — for replay surfacing.
+
+    Created by the `flag_moment` researcher command (brief §5.4) or by
+    the engine when it auto-detects something the replay tooling should
+    foreground (e.g., a participant rejoining mid-stalled-thread). The
+    `auto_generated` flag distinguishes the two so the UI can render
+    them differently.
+
+    `researcher_id` is nullable — auto-generated flags have no human
+    author.
+    """
+
+    __tablename__ = "session_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+    )
+    researcher_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    note: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    auto_generated: Mapped[bool] = mapped_column(
+        Boolean(),
+        nullable=False,
+        default=False,
+    )
+
+    __table_args__ = (Index("ix_session_flags_session_id_ts", "session_id", "ts"),)

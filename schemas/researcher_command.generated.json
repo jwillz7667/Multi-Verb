@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "A single researcher-issued command targeting one session.",
+  "description": "A single researcher-issued command targeting one session.\n\nWire shape matches brief §5.4 verbatim. The post-init validator\nasserts `payload` conforms to the typed model for `command_type`;\n`payload` itself stays an open `dict[str, Any]` to keep the JSON\nSchema (and thus the generated TypeScript) one-to-one with what the\nweb producer sends.",
   "properties": {
     "command_id": {
       "format": "uuid",
@@ -31,7 +31,7 @@
     },
     "payload": {
       "additionalProperties": true,
-      "description": "Command-specific JSON payload; typed per command_type in Phase 5.",
+      "description": "Command-specific JSON payload; validated against the typed model for command_type.",
       "title": "Payload",
       "type": "object"
     },

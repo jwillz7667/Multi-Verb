@@ -26,6 +26,12 @@ export type SessionId = string;
 
 /**
  * A single researcher-issued command targeting one session.
+ *
+ * Wire shape matches brief §5.4 verbatim. The post-init validator
+ * asserts `payload` conforms to the typed model for `command_type`;
+ * `payload` itself stays an open `dict[str, Any]` to keep the JSON
+ * Schema (and thus the generated TypeScript) one-to-one with what the
+ * web producer sends.
  */
 export interface ResearcherCommand {
   command_id: CommandId;
@@ -36,7 +42,7 @@ export interface ResearcherCommand {
   session_id: SessionId;
 }
 /**
- * Command-specific JSON payload; typed per command_type in Phase 5.
+ * Command-specific JSON payload; validated against the typed model for command_type.
  */
 export interface Payload {
   [k: string]: unknown | undefined;
