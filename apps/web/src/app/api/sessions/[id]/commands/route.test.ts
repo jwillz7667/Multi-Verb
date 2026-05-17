@@ -19,6 +19,17 @@ interface FakePublishResult {
   streamEntryId: string;
 }
 
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
+}
+
 const authMock = vi.fn<() => Promise<MockSession | null>>();
 const publishMock =
   vi.fn<
@@ -28,6 +39,8 @@ const publishMock =
       input: unknown;
     }) => Promise<FakePublishResult>
   >();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 class FakeSessionNotFoundError extends Error {
   readonly code = 'session_not_found';
@@ -58,6 +71,27 @@ vi.mock('@/features/sessions', async () => {
     SessionAlreadyEndedError: FakeSessionAlreadyEndedError,
   };
 });
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
+}));
+
+function makeScopedSessionRow(id: string): FakeScopedSessionRow {
+  return {
+    id,
+    studyId: 'study-1',
+    livekitRoomName: `room-${id}`,
+    status: 'live',
+    scheduledStart: null,
+    actualStart: new Date(),
+    actualEnd: null,
+    createdAt: new Date(),
+  };
+}
 
 async function importRoute() {
   return import('./route');
@@ -92,6 +126,29 @@ describe('POST /api/sessions/[id]/commands', () => {
     );
 
     expect(res.status).toBe(401);
+    expect(publishMock).not.toHaveBeenCalled();
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the session belongs to another org (scopedDb gate rejects before publish)', async () => {
+    // Cross-org caller mustn't be able to mute / pause / end / whisper
+    // another tenant's live focus group. Without the gate, `publishMock`
+    // would XADD the command onto the engine's stream before any
+    // ownership check — the moderator would actually execute it.
+    authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { POST } = await importRoute();
+
+    const res = await POST(
+      postRequest('http://localhost/api/sessions/sess-other/commands', {
+        command_type: 'end_session',
+      }),
+      makeContext('sess-other'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
     expect(publishMock).not.toHaveBeenCalled();
   });
 
@@ -179,8 +236,11 @@ describe('POST /api/sessions/[id]/commands', () => {
     expect(publishMock).not.toHaveBeenCalled();
   });
 
-  it('returns 404 when the session is unknown', async () => {
+  it('returns 404 when the session is unknown (publish throws SessionNotFoundError)', async () => {
+    // Race window: the gate could pass and the row vanish before XADD —
+    // the publish layer's `SessionNotFoundError` still gets mapped to 404.
     authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('missing'));
     publishMock.mockRejectedValue(new FakeSessionNotFoundError('missing'));
     const { POST } = await importRoute();
 
@@ -198,6 +258,7 @@ describe('POST /api/sessions/[id]/commands', () => {
 
   it('returns 409 when the session has already ended', async () => {
     authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('done'));
     publishMock.mockRejectedValue(new FakeSessionAlreadyEndedError('done'));
     const { POST } = await importRoute();
 
@@ -215,6 +276,7 @@ describe('POST /api/sessions/[id]/commands', () => {
 
   it('publishes a flag_moment command with an empty default payload', async () => {
     authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-1'));
     publishMock.mockResolvedValue({
       commandId: '11111111-1111-4111-8111-111111111111',
       issuedAt: '2026-05-17T10:00:00.000Z',
@@ -248,6 +310,7 @@ describe('POST /api/sessions/[id]/commands', () => {
 
   it('publishes a force_prompt with a target participant id', async () => {
     authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-2'));
     publishMock.mockResolvedValue({
       commandId: '22222222-2222-4222-8222-222222222222',
       issuedAt: '2026-05-17T10:00:01.000Z',
@@ -281,6 +344,7 @@ describe('POST /api/sessions/[id]/commands', () => {
 
   it('publishes a set_quietness_budget with one field set', async () => {
     authMock.mockResolvedValue({ user: { id: 'u-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-3'));
     publishMock.mockResolvedValue({
       commandId: '44444444-4444-4444-8444-444444444444',
       issuedAt: '2026-05-17T10:00:02.000Z',

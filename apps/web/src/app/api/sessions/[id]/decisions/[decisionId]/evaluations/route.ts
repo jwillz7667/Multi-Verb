@@ -27,6 +27,8 @@ import {
 } from '@/features/sessions';
 import type { RuleEvaluationRow } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,11 +53,21 @@ interface EvaluationsResponse {
 
 export async function GET(_request: Request, context: RouteContext): Promise<NextResponse> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const { id: sessionId, decisionId } = await context.params;
+
+  // Tenancy gate first: cross-org callers must 404 before the decision
+  // lookup runs. Otherwise the unscoped `findDecisionSessionId` would
+  // return another tenant's session id (we'd still 404, but the read
+  // itself is an info-leak vector — same risk as the clip route).
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  }
 
   // Belt-and-braces: resolve the session row first so an unknown id
   // returns the same 404 the rest of the dashboard returns. Doing this

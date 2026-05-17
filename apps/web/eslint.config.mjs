@@ -21,11 +21,19 @@ const noDirectDbAccess = {
 };
 
 /**
- * Files that still call `db.<tenantModel>` directly. Each is on a
- * documented migration path:
+ * Files that still call `db.<tenantModel>` directly. Each entry is a
+ * deliberate exception, not a migration debt:
  *
- *   - features/sessions/repo.ts, features/studies/repo.ts,
- *     app/room/[roomName]/page.tsx — migrated to scopedDb in P7 L2.
+ *   - features/sessions/repo.ts, features/studies/repo.ts — the repos
+ *     themselves are how `scopedDb` reaches Prisma. They're the only
+ *     code allowed to know about the underlying tenant column shape.
+ *
+ *   - app/room/[roomName]/page.tsx — the participant join surface. It
+ *     resolves the session by globally unique `livekitRoomName` so an
+ *     unauthenticated participant with a valid invite URL can render
+ *     the join UI. The actual security boundary is the LiveKit token
+ *     mint at `api/livekit/token/route.ts`, which is org-gated for
+ *     researcher/moderator roles.
  *
  * Adding files here should be a deliberate review decision, not a
  * convenience escape hatch. New code should use `scopedDb(orgId)` or

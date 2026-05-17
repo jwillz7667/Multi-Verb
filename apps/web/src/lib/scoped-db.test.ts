@@ -42,11 +42,13 @@ interface FakePrisma {
     studyFindFirst: PrismaCall[];
     studyFindMany: PrismaCall[];
     sessionFindFirst: PrismaCall[];
+    sessionFindMany: PrismaCall[];
   };
   responses: {
     studyFindFirst: unknown;
     studyFindMany: unknown;
     sessionFindFirst: unknown;
+    sessionFindMany: unknown;
   };
 }
 
@@ -55,11 +57,13 @@ function makeFakePrisma(): FakePrisma {
     studyFindFirst: [],
     studyFindMany: [],
     sessionFindFirst: [],
+    sessionFindMany: [],
   };
   const responses: FakePrisma['responses'] = {
     studyFindFirst: null,
     studyFindMany: [],
     sessionFindFirst: null,
+    sessionFindMany: [],
   };
   const client = {
     study: {
@@ -76,6 +80,10 @@ function makeFakePrisma(): FakePrisma {
       findFirst: (args: unknown): Promise<unknown> => {
         calls.sessionFindFirst.push({ args });
         return Promise.resolve(responses.sessionFindFirst);
+      },
+      findMany: (args: unknown): Promise<unknown> => {
+        calls.sessionFindMany.push({ args });
+        return Promise.resolve(responses.sessionFindMany);
       },
     },
   } as unknown as PrismaClient;
@@ -287,6 +295,59 @@ describe('scopedDb.sessions', () => {
     }).sessions.findByLivekitRoomName('verbio-room-abc');
 
     expect(result).toBeNull();
+  });
+
+  it('listRecent injects { study: { orgId } }, orders newest first, and respects the limit', async () => {
+    const fake = makeFakePrisma();
+    fake.responses.sessionFindMany = [
+      SESSION_ROW,
+      {
+        ...SESSION_ROW,
+        id: '55555555-5555-5555-5555-555555555555',
+        livekitRoomName: 'verbio-room-def',
+        createdAt: new Date('2026-05-14T00:00:00.000Z'),
+      },
+    ];
+
+    const rows = await scopedDb(ORG_A, { prisma: fake.client }).sessions.listRecent(25);
+
+    expect(fake.calls.sessionFindMany).toHaveLength(1);
+    const args = fake.calls.sessionFindMany[0]?.args as {
+      where: unknown;
+      orderBy: unknown;
+      take: number;
+      select: unknown;
+    };
+    // Nested where forces the join through `study.orgId` — sessions with
+    // no study (legacy Phase 1 rows) are excluded by Postgres.
+    expect(args.where).toEqual({ study: { orgId: ORG_A } });
+    expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+    expect(args.take).toBe(25);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.livekitRoomName).toBe('verbio-room-abc');
+  });
+
+  it('listRecent defaults to a 25-row limit when none is passed', async () => {
+    const fake = makeFakePrisma();
+    fake.responses.sessionFindMany = [];
+
+    await scopedDb(ORG_A, { prisma: fake.client }).sessions.listRecent();
+
+    const args = fake.calls.sessionFindMany[0]?.args as { take: number };
+    expect(args.take).toBe(25);
+  });
+
+  it('listRecent filters out rows where studyId is null (defense in depth)', async () => {
+    // The WHERE clause already excludes orphans through the `study: { orgId }`
+    // join, but the post-map guard catches any future Prisma quirk that
+    // could let one slip — e.g., a left-join introduced via includes.
+    const fake = makeFakePrisma();
+    fake.responses.sessionFindMany = [SESSION_ROW, { ...SESSION_ROW, id: 'orphan', studyId: null }];
+
+    const rows = await scopedDb(ORG_A, { prisma: fake.client }).sessions.listRecent();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(SESSION_ID);
   });
 });
 

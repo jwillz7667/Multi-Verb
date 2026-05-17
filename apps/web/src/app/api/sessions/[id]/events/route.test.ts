@@ -13,11 +13,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventEmitter } from 'node:events';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
 }
 
 interface FakeSessionRow {
   id: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
   livekitRoomName: string;
   status: string;
   scheduledStart: Date | null;
@@ -44,6 +55,8 @@ const listDecisionsSinceMock =
   vi.fn<(id: string, opts: { afterDecisionId?: string; limit?: number }) => Promise<unknown[]>>();
 const authMock = vi.fn<() => Promise<MockSession | null>>();
 const createSubscriberMock = vi.fn<() => FakeSubscriber>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -63,6 +76,14 @@ vi.mock('@/features/sessions', async () => {
 vi.mock('@/lib/redis', () => ({
   createSubscriber: createSubscriberMock,
   eventsChannel: (id: string): string => `verbio:events:${id}`,
+}));
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
 }));
 
 function buildFakeSubscriber(): FakeSubscriber {
@@ -96,6 +117,19 @@ function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
 }
 
+function makeScopedSessionRow(id: string): FakeScopedSessionRow {
+  return {
+    id,
+    studyId: 'study-1',
+    livekitRoomName: `room-${id}`,
+    status: 'live',
+    scheduledStart: null,
+    actualStart: new Date(),
+    actualEnd: null,
+    createdAt: new Date(),
+  };
+}
+
 describe('GET /api/sessions/[id]/events', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -113,10 +147,37 @@ describe('GET /api/sessions/[id]/events', () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('unauthorized');
+    // Auth must short-circuit before any tenancy / session lookup —
+    // otherwise an unauthenticated caller probes session existence.
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
+    expect(findSessionByIdMock).not.toHaveBeenCalled();
+    expect(createSubscriberMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the session belongs to another org (scopedDb gate rejects before Redis subscribe)', async () => {
+    // SSE is especially sensitive to gate placement: without this guard
+    // a cross-org caller would start a Redis subscriber on another
+    // tenant's channel and immediately receive their live utterance /
+    // decision frames before the response stream closes.
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-other/events'),
+      makeContext('sess-other'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
+    expect(findSessionByIdMock).not.toHaveBeenCalled();
+    expect(createSubscriberMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('missing'));
     findSessionByIdMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -128,10 +189,12 @@ describe('GET /api/sessions/[id]/events', () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('session_not_found');
+    expect(createSubscriberMock).not.toHaveBeenCalled();
   });
 
   it('returns SSE headers and a ready frame on successful connect', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-1'));
     findSessionByIdMock.mockResolvedValue({
       id: 'sess-1',
       livekitRoomName: 'room-x',
@@ -175,7 +238,8 @@ describe('GET /api/sessions/[id]/events', () => {
   });
 
   it('passes Last-Event-ID through to both backfill queries', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-2'));
     findSessionByIdMock.mockResolvedValue({
       id: 'sess-2',
       livekitRoomName: 'room-y',
@@ -233,7 +297,8 @@ describe('GET /api/sessions/[id]/events', () => {
   });
 
   it('routes a published state_snapshot envelope as event: state_snapshot', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-3'));
     findSessionByIdMock.mockResolvedValue({
       id: 'sess-3',
       livekitRoomName: 'room-z',
@@ -316,7 +381,8 @@ describe('GET /api/sessions/[id]/events', () => {
   });
 
   it('routes a published decision envelope as event: decision', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-4'));
     findSessionByIdMock.mockResolvedValue({
       id: 'sess-4',
       livekitRoomName: 'room-w',

@@ -11,11 +11,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
 }
 
 interface FakeSessionRow {
   id: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
   livekitRoomName: string;
   status: string;
   scheduledStart: Date | null;
@@ -40,6 +51,8 @@ const findDecisionSessionIdMock = vi.fn<(decisionId: string) => Promise<string |
 const listRuleEvaluationsForDecisionMock =
   vi.fn<(decisionId: string) => Promise<FakeRuleEvaluationRow[]>>();
 const authMock = vi.fn<() => Promise<MockSession | null>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -49,6 +62,14 @@ vi.mock('@/features/sessions', () => ({
   findSessionById: findSessionByIdMock,
   findDecisionSessionId: findDecisionSessionIdMock,
   listRuleEvaluationsForDecision: listRuleEvaluationsForDecisionMock,
+}));
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
 }));
 
 async function importRoute() {
@@ -62,6 +83,19 @@ function makeContext(id: string, decisionId: string) {
 function makeSessionRow(id: string): FakeSessionRow {
   return {
     id,
+    livekitRoomName: `room-${id}`,
+    status: 'live',
+    scheduledStart: null,
+    actualStart: new Date(),
+    actualEnd: null,
+    createdAt: new Date(),
+  };
+}
+
+function makeScopedSessionRow(id: string): FakeScopedSessionRow {
+  return {
+    id,
+    studyId: 'study-1',
     livekitRoomName: `room-${id}`,
     status: 'live',
     scheduledStart: null,
@@ -88,12 +122,35 @@ describe('GET /api/sessions/[id]/decisions/[decisionId]/evaluations', () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('unauthorized');
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionByIdMock).not.toHaveBeenCalled();
     expect(listRuleEvaluationsForDecisionMock).not.toHaveBeenCalled();
   });
 
+  it('returns 404 when the session belongs to another org (scopedDb gate rejects before any decision read)', async () => {
+    // Tenancy gate must reject before the decision lookup. Without it
+    // a cross-org caller could probe decision ids — the same risk the
+    // clip route mitigates by gating ahead of the flag lookup.
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/decisions/dec-1/evaluations'),
+      makeContext('sess-1', 'dec-1'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
+    expect(findSessionByIdMock).not.toHaveBeenCalled();
+    expect(findDecisionSessionIdMock).not.toHaveBeenCalled();
+    expect(listRuleEvaluationsForDecisionMock).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the session is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('missing'));
     findSessionByIdMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -110,7 +167,8 @@ describe('GET /api/sessions/[id]/decisions/[decisionId]/evaluations', () => {
   });
 
   it('returns 404 when the decision id is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-1'));
     findSessionByIdMock.mockResolvedValue(makeSessionRow('sess-1'));
     findDecisionSessionIdMock.mockResolvedValue(null);
     const { GET } = await importRoute();
@@ -127,7 +185,8 @@ describe('GET /api/sessions/[id]/decisions/[decisionId]/evaluations', () => {
   });
 
   it('returns 404 when the decision belongs to a different session', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-1'));
     findSessionByIdMock.mockResolvedValue(makeSessionRow('sess-1'));
     // Cross-session smuggling attempt — decision lives under sess-other.
     findDecisionSessionIdMock.mockResolvedValue('sess-other');
@@ -147,7 +206,8 @@ describe('GET /api/sessions/[id]/decisions/[decisionId]/evaluations', () => {
   });
 
   it('returns 200 with DTO-shaped evaluations for the owning session', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow('sess-1'));
     findSessionByIdMock.mockResolvedValue(makeSessionRow('sess-1'));
     findDecisionSessionIdMock.mockResolvedValue('sess-1');
     listRuleEvaluationsForDecisionMock.mockResolvedValue([

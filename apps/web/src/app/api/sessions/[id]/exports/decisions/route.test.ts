@@ -16,7 +16,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionRow, ParticipantRow, ReplaySessionRow } from '@/features/sessions';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
 }
 
 const authMock = vi.fn<() => Promise<MockSession | null>>();
@@ -24,6 +35,8 @@ const findSessionForReplayMock = vi.fn<(id: string) => Promise<ReplaySessionRow 
 const listParticipantsForSessionMock = vi.fn<(id: string) => Promise<ParticipantRow[]>>();
 const iterateAllDecisionsForSessionMock =
   vi.fn<(id: string) => AsyncGenerator<DecisionRow[], void, void>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -35,12 +48,33 @@ vi.mock('@/features/sessions', () => ({
   iterateAllDecisionsForSession: iterateAllDecisionsForSessionMock,
 }));
 
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
+}));
+
 async function importRoute() {
   return import('./route');
 }
 
 function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
+}
+
+function makeScopedSession(): FakeScopedSessionRow {
+  return {
+    id: 'sess-12345678abcdef',
+    studyId: 'study-1',
+    livekitRoomName: 'room-alpha',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00.000Z'),
+    actualEnd: new Date('2026-05-01T10:00:30.000Z'),
+    createdAt: new Date('2026-05-01T09:55:00.000Z'),
+  };
 }
 
 function makeSession(overrides: Partial<ReplaySessionRow> = {}): ReplaySessionRow {
@@ -127,12 +161,29 @@ describe('GET /api/sessions/[id]/exports/decisions', () => {
     );
 
     expect(res.status).toBe(401);
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(iterateAllDecisionsForSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the session belongs to another org (scopedDb gate filters it)', async () => {
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/exports/decisions'),
+      makeContext('sess-1'),
+    );
+
+    expect(res.status).toBe(404);
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(iterateAllDecisionsForSessionMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -148,7 +199,8 @@ describe('GET /api/sessions/[id]/exports/decisions', () => {
   });
 
   it('returns 200 text/csv with a downloadable filename and the column header on the first line', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     listParticipantsForSessionMock.mockResolvedValue([
       makeParticipant({ id: 'p-alice', displayName: 'Alice' }),
@@ -175,7 +227,8 @@ describe('GET /api/sessions/[id]/exports/decisions', () => {
   });
 
   it('includes both stay_silent and executed decisions — silence is auditable too', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     listParticipantsForSessionMock.mockResolvedValue([
       makeParticipant({ id: 'p-alice', displayName: 'Alice' }),
@@ -218,7 +271,8 @@ describe('GET /api/sessions/[id]/exports/decisions', () => {
   });
 
   it('sanitises filename so room names with slashes or quotes become safe', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(
       makeSession({ livekitRoomName: 'room/with spaces & "quotes"' }),
     );

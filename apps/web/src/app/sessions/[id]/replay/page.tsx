@@ -44,6 +44,8 @@ import type {
   UtteranceWithSpeakerRow,
 } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 import { ReplayShell } from './replay-shell';
 
@@ -71,9 +73,17 @@ interface PageProps {
 export default async function ReplayPage({ params }: PageProps): Promise<React.ReactElement> {
   const userSession = await auth();
   const { id } = await params;
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     redirect(`/sign-in?callbackUrl=/sessions/${id}/replay`);
   }
+
+  // Tenancy gate: scopedDb confirms ownership before any per-session
+  // data is loaded. Cross-org access becomes a 404, indistinguishable
+  // from a missing id — never reveal that another tenant owns the
+  // session by serving its replay shell or even leaking timing info.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(id);
+  if (owned === null) notFound();
 
   const session = await findSessionForReplay(id);
   if (session === null) notFound();

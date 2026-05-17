@@ -20,7 +20,18 @@ import type * as ExportsModule from '@/features/exports';
 import type { ReplaySessionRow, SessionFlagRow } from '@/features/sessions';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
 }
 
 const authMock = vi.fn<() => Promise<MockSession | null>>();
@@ -34,6 +45,8 @@ const spawnFfmpegClipStreamMock = vi.fn<
     stderr: Promise<string>;
   }
 >();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -42,6 +55,14 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/features/sessions', () => ({
   findSessionFlagById: findSessionFlagByIdMock,
   findSessionForReplay: findSessionForReplayMock,
+}));
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
 }));
 
 class FakeR2NotConfiguredError extends Error {
@@ -74,6 +95,19 @@ async function importRoute() {
 
 function makeContext(id: string, flagId: string) {
   return { params: Promise.resolve({ id, flagId }) };
+}
+
+function makeScopedSession(): FakeScopedSessionRow {
+  return {
+    id: 'sess-12345678abcdef',
+    studyId: 'study-1',
+    livekitRoomName: 'room-alpha',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00.000Z'),
+    actualEnd: new Date('2026-05-01T10:30:00.000Z'),
+    createdAt: new Date('2026-05-01T09:55:00.000Z'),
+  };
 }
 
 function makeFlag(overrides: Partial<SessionFlagRow> = {}): SessionFlagRow {
@@ -132,14 +166,34 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
     const { GET } = await importRoute();
     const res = await GET(new Request('http://localhost/x'), makeContext('sess-1', 'flag-1'));
     expect(res.status).toBe(401);
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionFlagByIdMock).not.toHaveBeenCalled();
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(signGetUrlMock).not.toHaveBeenCalled();
     expect(spawnFfmpegClipStreamMock).not.toHaveBeenCalled();
   });
 
+  it('returns 404 when the session belongs to another org (scopedDb gate rejects before any flag read)', async () => {
+    // Tenancy must reject the request before `findSessionFlagById` runs.
+    // Otherwise the unscoped flag lookup leaks a row from another tenant
+    // even though the per-session check would later 404 — the read itself
+    // is the exposure surface.
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+    const res = await GET(
+      new Request('http://localhost/x'),
+      makeContext('sess-12345678abcdef', 'flag-12345678abcdef'),
+    );
+    expect(res.status).toBe(404);
+    expect(findSessionFlagByIdMock).not.toHaveBeenCalled();
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(spawnFfmpegClipStreamMock).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the flag is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(null);
     const { GET } = await importRoute();
     const res = await GET(
@@ -152,7 +206,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 404 when the flag belongs to a different session (cross-session smuggling guard)', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag({ sessionId: 'sess-OTHER-9999' }));
     const { GET } = await importRoute();
     const res = await GET(
@@ -165,7 +220,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 404 when the session itself is missing', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
@@ -178,7 +234,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 422 when the session never started (no actual_start)', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag());
     findSessionForReplayMock.mockResolvedValue(makeSession({ actualStart: null, actualEnd: null }));
     const { GET } = await importRoute();
@@ -191,7 +248,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 422 when the composite recording has not been written yet', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag());
     findSessionForReplayMock.mockResolvedValue(makeSession({ recordingUrl: null }));
     const { GET } = await importRoute();
@@ -204,7 +262,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 503 when R2 is not configured for this deployment', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     signGetUrlMock.mockRejectedValue(new FakeR2NotConfiguredError());
@@ -218,7 +277,8 @@ describe('GET /api/sessions/[id]/exports/clips/[flagId]', () => {
   });
 
   it('returns 200 streaming audio/mpeg with an attachment filename + the right ffmpeg window', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionFlagByIdMock.mockResolvedValue(makeFlag());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     signGetUrlMock.mockResolvedValue('https://r2.example.com/signed-recording.mp4?sig=abc');

@@ -68,6 +68,7 @@ export interface ScopedDb {
   sessions: {
     findById(sessionId: string): Promise<ScopedSessionRow | null>;
     findByLivekitRoomName(roomName: string): Promise<ScopedSessionRow | null>;
+    listRecent(limit?: number): Promise<ScopedSessionRow[]>;
   };
 }
 
@@ -170,6 +171,38 @@ export function scopedDb(orgId: string, options: ScopedDbOptions = {}): ScopedDb
           actualEnd: row.actualEnd,
           createdAt: row.createdAt,
         };
+      },
+      async listRecent(limit = 25): Promise<ScopedSessionRow[]> {
+        // Newest first so the dashboard's "recent sessions" view paints
+        // the active / just-finished ones at the top. The `study.orgId`
+        // join excludes orphans (studyId === null) — those are admin-only.
+        const rows = await prisma.moderatedSession.findMany({
+          where: { study: { orgId } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: limit,
+          select: {
+            id: true,
+            studyId: true,
+            livekitRoomName: true,
+            status: true,
+            scheduledStart: true,
+            actualStart: true,
+            actualEnd: true,
+            createdAt: true,
+          },
+        });
+        return rows
+          .filter((row): row is typeof row & { studyId: string } => row.studyId !== null)
+          .map((row) => ({
+            id: row.id,
+            studyId: row.studyId,
+            livekitRoomName: row.livekitRoomName,
+            status: row.status as SessionStatus,
+            scheduledStart: row.scheduledStart,
+            actualStart: row.actualStart,
+            actualEnd: row.actualEnd,
+            createdAt: row.createdAt,
+          }));
       },
     },
   };

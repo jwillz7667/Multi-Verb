@@ -39,6 +39,8 @@ import {
 } from '@/features/recordings';
 import { findSessionForReplay } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,11 +60,22 @@ const URL_TTL_SECONDS = 60 * 60; // 1 hour — matches signGetUrl default.
 
 export async function GET(request: Request, context: RouteContext): Promise<NextResponse> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const { id: sessionId } = await context.params;
+
+  // Tenancy gate: scopedDb confirms ownership before any per-session
+  // data is loaded. Cross-org access returns 404, indistinguishable
+  // from a missing id — never expose another tenant's recording
+  // existence to a probing caller.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  }
+
   const session = await findSessionForReplay(sessionId);
   if (session === null) {
     return NextResponse.json({ error: 'session_not_found' }, { status: 404 });

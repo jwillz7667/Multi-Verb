@@ -17,6 +17,8 @@ import { notFound, redirect } from 'next/navigation';
 import { findSessionById } from '@/features/sessions';
 import { auth } from '@/lib/auth';
 import { clientEnv } from '@/lib/env';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 import { ControlBar } from './control-bar';
 import { DecisionLog } from './decision-log';
@@ -36,9 +38,19 @@ export default async function SessionDetailPage({
 }: PageProps): Promise<React.ReactElement> {
   const userSession = await auth();
   const { id } = await params;
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     redirect(`/sign-in?callbackUrl=/sessions/${id}`);
   }
+
+  // Tenancy gate: confirm session ownership before loading any
+  // per-session data. Cross-org access becomes a 404, matching the
+  // replay page and the export routes — the live detail page would
+  // otherwise leak per-session metadata (room name, status, timestamps)
+  // through the rendered HTML.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(id);
+  if (owned === null) notFound();
+
   const session = await findSessionById(id);
   if (session === null) notFound();
 

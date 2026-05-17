@@ -28,6 +28,8 @@ import {
   type ParticipantRow,
 } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,11 +40,20 @@ interface RouteContext {
 
 export async function GET(_request: Request, context: RouteContext): Promise<NextResponse> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const { id: sessionId } = await context.params;
+
+  // Tenancy gate: scopedDb confirms ownership before any per-session
+  // data is loaded. Cross-org access returns 404, indistinguishable
+  // from a missing id so the response can't fingerprint other tenants.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  }
 
   const session = await findSessionForReplay(sessionId);
   if (session === null) {

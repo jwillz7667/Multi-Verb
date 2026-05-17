@@ -39,6 +39,8 @@ import { computeClipWindow, makeClipFilename, spawnFfmpegClipStream } from '@/fe
 import { R2NotConfiguredError, signGetUrl } from '@/features/recordings';
 import { findSessionFlagById, findSessionForReplay } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,11 +58,21 @@ export async function GET(
   context: RouteContext,
 ): Promise<NextResponse | Response> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const { id: sessionId, flagId } = await context.params;
+
+  // Tenancy gate first: a cross-org flag id must not be readable, even
+  // briefly, before the session ownership check. Without this gate the
+  // unscoped `findSessionFlagById` would return another tenant's flag
+  // row (we'd still 404, but the read itself is an info-leak vector).
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  }
 
   const flag = await findSessionFlagById(flagId);
   // Cross-session smuggling guard: a flag id from another session must

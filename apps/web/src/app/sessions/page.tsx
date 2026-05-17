@@ -1,25 +1,28 @@
 /**
  * /sessions — researcher dashboard listing recent sessions.
  *
- * Phase 1 surface: minimal listing + a create button. Phase 2+ will
- * scope this to the user's organisation, surface study membership,
- * and add search / filter / pagination.
+ * Tenant-scoped via `scopedDb(orgId).sessions.listRecent` — orphans
+ * (studyId === null, legacy Phase 1 sessions) are intentionally
+ * filtered out so this never shows another tenant's data and never
+ * surfaces unowned admin-only rows.
  */
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
-import { listRecentSessions } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SessionsPage(): Promise<React.ReactElement> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     redirect('/sign-in?callbackUrl=/sessions');
   }
-  const sessions = await listRecentSessions();
+  const orgId = orgIdForUser(userSession.user.id);
+  const sessions = await scopedDb(orgId).sessions.listRecent();
 
   return (
     <main className="min-h-screen bg-surface-secondary text-text-primary">

@@ -5,6 +5,8 @@
  *   - Unauthenticated → 401, no DB lookup attempted.
  *   - Missing `ts` query param → 400.
  *   - Unparseable `ts` → 400.
+ *   - Cross-org session (scopedDb returns null) → 404; the wider
+ *     replay projection is never loaded.
  *   - Unknown session → 404.
  *   - No snapshot ≤ ts → 404 (scrubber landed before first tick).
  *   - Happy path → 200 with the wire DTO; bigint tick_id is coerced
@@ -14,7 +16,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface MockUserSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
 }
 
 interface FakeSessionRow {
@@ -30,6 +32,17 @@ interface FakeSessionRow {
   configSnapshot: unknown;
 }
 
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
+}
+
 interface FakeSnapshotRow {
   id: string;
   sessionId: string;
@@ -42,6 +55,8 @@ const authMock = vi.fn<() => Promise<MockUserSession | null>>();
 const findSessionForReplayMock = vi.fn<(id: string) => Promise<FakeSessionRow | null>>();
 const findSnapshotAtOrBeforeMock =
   vi.fn<(sessionId: string, ts: Date) => Promise<FakeSnapshotRow | null>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockUserSession | null> => authMock(),
@@ -50,6 +65,14 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/features/sessions', () => ({
   findSessionForReplay: findSessionForReplayMock,
   findSnapshotAtOrBefore: findSnapshotAtOrBeforeMock,
+}));
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
 }));
 
 async function importRoute() {
@@ -75,6 +98,19 @@ function makeSessionRow(): FakeSessionRow {
   };
 }
 
+function makeScopedSessionRow(): FakeScopedSessionRow {
+  return {
+    id: 'sess-1',
+    studyId: 'study-1',
+    livekitRoomName: 'room-1',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00Z'),
+    actualEnd: new Date('2026-05-01T11:00:00Z'),
+    createdAt: new Date('2026-05-01T09:50:00Z'),
+  };
+}
+
 describe('GET /api/sessions/[id]/snapshots/at', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -90,12 +126,13 @@ describe('GET /api/sessions/[id]/snapshots/at', () => {
     );
 
     expect(res.status).toBe(401);
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(findSnapshotAtOrBeforeMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when the ts query param is missing', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
     const { GET } = await importRoute();
 
     const res = await GET(
@@ -106,11 +143,12 @@ describe('GET /api/sessions/[id]/snapshots/at', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('ts_required');
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when ts is not a valid date', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
     const { GET } = await importRoute();
 
     const res = await GET(
@@ -123,8 +161,31 @@ describe('GET /api/sessions/[id]/snapshots/at', () => {
     expect(body.error).toBe('ts_invalid');
   });
 
+  it('returns 404 when the session belongs to another org (scopedDb returns null)', async () => {
+    // Cross-tenant access: the scopedDb gate filters it out before the
+    // replay projection is even attempted. The replay helper must not
+    // be invoked — otherwise we'd be leaking a single unauthorized read
+    // per request (and the tenant guard would only catch the second one).
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/snapshots/at?ts=2026-05-01T10:00:00Z'),
+      makeContext('sess-1'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
+    expect(scopedSessionsFindByIdMock).toHaveBeenCalledWith('sess-1');
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(findSnapshotAtOrBeforeMock).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the session does not exist', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -140,7 +201,8 @@ describe('GET /api/sessions/[id]/snapshots/at', () => {
   });
 
   it('returns 404 when no snapshot ≤ ts exists', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     findSnapshotAtOrBeforeMock.mockResolvedValue(null);
     const { GET } = await importRoute();
@@ -156,7 +218,8 @@ describe('GET /api/sessions/[id]/snapshots/at', () => {
   });
 
   it('returns 200 with the snapshot DTO; bigint tick_id is coerced to number', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     findSnapshotAtOrBeforeMock.mockResolvedValue({
       id: 'snap-1',

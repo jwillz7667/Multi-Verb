@@ -28,7 +28,6 @@ export {
   listDecisionsSince,
   listExecutedModeratorTurns,
   listParticipantsForSession,
-  listRecentSessions,
   listRuleEvaluationsForDecision,
   listSessionFlagsByRange,
   listSnapshotsByRange,

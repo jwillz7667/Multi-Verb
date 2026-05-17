@@ -23,7 +23,18 @@ import type {
 } from '@/features/sessions';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
 }
 
 const authMock = vi.fn<() => Promise<MockSession | null>>();
@@ -34,6 +45,8 @@ const listExecutedModeratorTurnsMock = vi.fn<(id: string) => Promise<DecisionRow
 // pre-built chunk per call.
 const iterateAllUtterancesForSessionMock =
   vi.fn<(id: string) => AsyncGenerator<UtteranceWithSpeakerRow[], void, void>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -46,12 +59,33 @@ vi.mock('@/features/sessions', () => ({
   iterateAllUtterancesForSession: iterateAllUtterancesForSessionMock,
 }));
 
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
+}));
+
 async function importRoute() {
   return import('./route');
 }
 
 function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
+}
+
+function makeScopedSession(): FakeScopedSessionRow {
+  return {
+    id: 'sess-12345678abcdef',
+    studyId: 'study-1',
+    livekitRoomName: 'room-alpha',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00.000Z'),
+    actualEnd: new Date('2026-05-01T10:00:30.000Z'),
+    createdAt: new Date('2026-05-01T09:55:00.000Z'),
+  };
 }
 
 function makeSession(overrides: Partial<ReplaySessionRow> = {}): ReplaySessionRow {
@@ -152,12 +186,13 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
     );
 
     expect(res.status).toBe(401);
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(iterateAllUtterancesForSessionMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 for an unsupported format', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
     const { GET } = await importRoute();
 
     const res = await GET(
@@ -168,11 +203,32 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_format');
+    // Validation runs before the tenancy gate so an invalid request
+    // never causes a DB roundtrip — keep 400s cheap.
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
   });
 
+  it('returns 404 when the session belongs to another org (scopedDb gate filters it)', async () => {
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/exports/transcript'),
+      makeContext('sess-1'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(iterateAllUtterancesForSessionMock).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when the session is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -188,7 +244,8 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
   });
 
   it('returns 200 text/plain with the interleaved transcript and a download filename for format=txt', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     listParticipantsForSessionMock.mockResolvedValue([
       makeParticipant({ id: 'p-alice', displayName: 'Alice', livekitIdentity: 'alice-001' }),
@@ -254,7 +311,8 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
   });
 
   it('returns 200 text/vtt for format=vtt with a WEBVTT preamble', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     listParticipantsForSessionMock.mockResolvedValue([]);
     listExecutedModeratorTurnsMock.mockResolvedValue([]);
@@ -281,7 +339,8 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
   });
 
   it('falls back to createdAt when actualStart is null so cue clocks start at 0', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(
       makeSession({
         actualStart: null,
@@ -319,7 +378,8 @@ describe('GET /api/sessions/[id]/exports/transcript', () => {
   });
 
   it('sanitises filename so room names with slashes or quotes become safe', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(
       makeSession({ livekitRoomName: 'room/with spaces & "quotes"' }),
     );

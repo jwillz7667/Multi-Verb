@@ -26,6 +26,8 @@ import {
   SessionNotFoundError,
 } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 import type { ZodError } from 'zod';
 
@@ -65,6 +67,17 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
       { error: 'invalid_payload', issues: zodIssueTree(parsed.error) },
       { status: 422 },
     );
+  }
+
+  // Tenancy gate: a cross-org caller must 404 before the command is
+  // published to Redis. Without this gate a researcher in org A could
+  // mute / pause / end-session another tenant's live focus group by
+  // POSTing a guessed session id. Validation runs first so a malformed
+  // 422 doesn't cost a DB roundtrip.
+  const orgId = orgIdForUser(researcherId);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
   }
 
   try {

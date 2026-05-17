@@ -198,31 +198,6 @@ export async function listParticipantsForSession(sessionId: string): Promise<Par
   }));
 }
 
-export async function listRecentSessions(limit = 25): Promise<ModeratedSessionRow[]> {
-  const rows = await db.moderatedSession.findMany({
-    orderBy: { createdAt: 'desc' },
-    take: limit,
-    select: {
-      id: true,
-      livekitRoomName: true,
-      status: true,
-      scheduledStart: true,
-      actualStart: true,
-      actualEnd: true,
-      createdAt: true,
-    },
-  });
-  return rows.map((row) => ({
-    id: row.id,
-    livekitRoomName: row.livekitRoomName,
-    status: row.status as SessionStatus,
-    scheduledStart: row.scheduledStart,
-    actualStart: row.actualStart,
-    actualEnd: row.actualEnd,
-    createdAt: row.createdAt,
-  }));
-}
-
 export interface UtteranceWithSpeakerRow {
   id: string;
   sessionId: string;

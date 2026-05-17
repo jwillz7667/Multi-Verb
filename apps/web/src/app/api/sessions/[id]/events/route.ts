@@ -52,7 +52,9 @@ import type {
   UtteranceWithSpeakerRow,
 } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
 import { createSubscriber, eventsChannel } from '@/lib/redis';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -73,7 +75,7 @@ interface RouteContext {
 
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
@@ -81,6 +83,20 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   }
 
   const { id: sessionId } = await context.params;
+
+  // Tenancy gate: a cross-org caller must 404 before we subscribe to
+  // the Redis channel or backfill from Postgres. Without this gate the
+  // SSE stream would silently start broadcasting another tenant's
+  // utterance / decision frames to anyone who guesses a session id.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return new Response(JSON.stringify({ error: 'session_not_found' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
   const session = await findSessionById(sessionId);
   if (session === null) {
     return new Response(JSON.stringify({ error: 'session_not_found' }), {

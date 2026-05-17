@@ -15,13 +15,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReplaySessionRow, StateSnapshotRow } from '@/features/sessions';
 
 interface MockSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
+}
+
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
 }
 
 const authMock = vi.fn<() => Promise<MockSession | null>>();
 const findSessionForReplayMock = vi.fn<(id: string) => Promise<ReplaySessionRow | null>>();
 const iterateAllSnapshotsForSessionMock =
   vi.fn<(id: string) => AsyncGenerator<StateSnapshotRow[], void, void>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockSession | null> => authMock(),
@@ -32,12 +45,33 @@ vi.mock('@/features/sessions', () => ({
   iterateAllSnapshotsForSession: iterateAllSnapshotsForSessionMock,
 }));
 
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
+}));
+
 async function importRoute() {
   return import('./route');
 }
 
 function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
+}
+
+function makeScopedSession(): FakeScopedSessionRow {
+  return {
+    id: 'sess-12345678abcdef',
+    studyId: 'study-1',
+    livekitRoomName: 'room-alpha',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00.000Z'),
+    actualEnd: new Date('2026-05-01T10:00:30.000Z'),
+    createdAt: new Date('2026-05-01T09:55:00.000Z'),
+  };
 }
 
 function makeSession(overrides: Partial<ReplaySessionRow> = {}): ReplaySessionRow {
@@ -91,12 +125,29 @@ describe('GET /api/sessions/[id]/exports/snapshots', () => {
     );
 
     expect(res.status).toBe(401);
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(iterateAllSnapshotsForSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the session belongs to another org (scopedDb gate filters it)', async () => {
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/exports/snapshots'),
+      makeContext('sess-1'),
+    );
+
+    expect(res.status).toBe(404);
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(iterateAllSnapshotsForSessionMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session is unknown', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -110,7 +161,8 @@ describe('GET /api/sessions/[id]/exports/snapshots', () => {
   });
 
   it('returns 200 application/x-ndjson with one JSON object per line and a download filename', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     iterateAllSnapshotsForSessionMock.mockImplementation(
       generatorOf([
@@ -158,7 +210,8 @@ describe('GET /api/sessions/[id]/exports/snapshots', () => {
   });
 
   it('returns 200 with an empty body when the session has no snapshots yet', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(makeSession());
     iterateAllSnapshotsForSessionMock.mockImplementation(generatorOf([]));
 
@@ -174,7 +227,8 @@ describe('GET /api/sessions/[id]/exports/snapshots', () => {
   });
 
   it('sanitises filename so room names with slashes or quotes become safe', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSession());
     findSessionForReplayMock.mockResolvedValue(
       makeSession({ livekitRoomName: 'room/with spaces & "quotes"' }),
     );

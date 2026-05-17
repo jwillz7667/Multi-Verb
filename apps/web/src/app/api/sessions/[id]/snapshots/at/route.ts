@@ -25,6 +25,8 @@ import { NextResponse } from 'next/server';
 
 import { findSessionForReplay, findSnapshotAtOrBefore } from '@/features/sessions';
 import { auth } from '@/lib/auth';
+import { orgIdForUser } from '@/lib/identity';
+import { scopedDb } from '@/lib/scoped-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,7 +44,7 @@ interface SnapshotResponse {
 
 export async function GET(request: Request, context: RouteContext): Promise<NextResponse> {
   const userSession = await auth();
-  if (!userSession?.user) {
+  if (!userSession?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
@@ -57,6 +59,18 @@ export async function GET(request: Request, context: RouteContext): Promise<Next
     return NextResponse.json({ error: 'ts_invalid' }, { status: 400 });
   }
 
+  // Tenancy gate: scopedDb confirms the session belongs to the
+  // caller's org before any per-session data is loaded. Cross-org
+  // access returns null here and is surfaced as 404 — indistinguishable
+  // from a missing id so the response can't fingerprint other tenants.
+  const orgId = orgIdForUser(userSession.user.id);
+  const owned = await scopedDb(orgId).sessions.findById(sessionId);
+  if (owned === null) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  }
+  // The replay projection (recordingUrl, configSnapshot, etc.) lives
+  // in the broader `findSessionForReplay` helper. scopedDb's narrow
+  // surface is deliberate — a second indexed lookup is cheap.
   const session = await findSessionForReplay(sessionId);
   if (session === null) {
     return NextResponse.json({ error: 'session_not_found' }, { status: 404 });

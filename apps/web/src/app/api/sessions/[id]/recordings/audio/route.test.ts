@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ReplayUrlsModule from '@/features/recordings/replay-urls';
 
 interface MockUserSession {
-  user?: { email: string } | null;
+  user?: { id: string; email: string } | null;
 }
 
 interface FakeSessionRow {
@@ -34,6 +34,17 @@ interface FakeSessionRow {
   configSnapshot: unknown;
 }
 
+interface FakeScopedSessionRow {
+  id: string;
+  studyId: string;
+  livekitRoomName: string;
+  status: string;
+  scheduledStart: Date | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  createdAt: Date;
+}
+
 class FakeR2NotConfiguredError extends Error {
   readonly missing: readonly string[];
   constructor(missing: readonly string[]) {
@@ -46,6 +57,8 @@ class FakeR2NotConfiguredError extends Error {
 const findSessionForReplayMock = vi.fn<(id: string) => Promise<FakeSessionRow | null>>();
 const signGetUrlMock = vi.fn<(key: string, ttl?: number) => Promise<string>>();
 const authMock = vi.fn<() => Promise<MockUserSession | null>>();
+const scopedSessionsFindByIdMock =
+  vi.fn<(sessionId: string) => Promise<FakeScopedSessionRow | null>>();
 
 vi.mock('@/lib/auth', () => ({
   auth: (): Promise<MockUserSession | null> => authMock(),
@@ -53,6 +66,14 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/features/sessions', () => ({
   findSessionForReplay: findSessionForReplayMock,
+}));
+
+vi.mock('@/lib/scoped-db', () => ({
+  scopedDb: (_orgId: string) => ({
+    sessions: {
+      findById: scopedSessionsFindByIdMock,
+    },
+  }),
 }));
 
 vi.mock('@/features/recordings', async () => {
@@ -73,6 +94,19 @@ async function importRoute() {
 
 function makeContext(id: string) {
   return { params: Promise.resolve({ id }) };
+}
+
+function makeScopedSessionRow(): FakeScopedSessionRow {
+  return {
+    id: 'sess-1',
+    studyId: 'study-1',
+    livekitRoomName: 'room-1',
+    status: 'ended',
+    scheduledStart: null,
+    actualStart: new Date('2026-05-01T10:00:00Z'),
+    actualEnd: new Date('2026-05-01T11:00:00Z'),
+    createdAt: new Date('2026-05-01T09:50:00Z'),
+  };
 }
 
 function makeSessionRow(overrides: Partial<FakeSessionRow> = {}): FakeSessionRow {
@@ -110,12 +144,35 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('unauthorized');
+    expect(scopedSessionsFindByIdMock).not.toHaveBeenCalled();
+    expect(findSessionForReplayMock).not.toHaveBeenCalled();
+    expect(signGetUrlMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the session belongs to another org (scopedDb gate filters it)', async () => {
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(null);
+    const { GET } = await importRoute();
+
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-1/recordings/audio'),
+      makeContext('sess-1'),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('session_not_found');
+    // Cross-org caller must not be able to mint a signed URL even by
+    // accident: the scopedDb gate has to keep `signGetUrl` un-invoked,
+    // which is how we prove the URL is never produced for a tenant
+    // that doesn't own the session.
     expect(findSessionForReplayMock).not.toHaveBeenCalled();
     expect(signGetUrlMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session does not exist', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(null);
     const { GET } = await importRoute();
 
@@ -131,7 +188,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('returns 404 when no composite recording is present', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow({ recordingUrl: null }));
     const { GET } = await importRoute();
 
@@ -147,7 +205,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('returns 200 with a signed URL for the composite recording', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     signGetUrlMock.mockResolvedValue('https://r2.example/sessions/sess-1/composite.mp4?sig=xyz');
     const { GET } = await importRoute();
@@ -172,7 +231,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('returns 200 with a signed URL for a per-participant track', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     signGetUrlMock.mockResolvedValue(
       'https://r2.example/sessions/sess-1/participants/alice.mp4?sig=abc',
@@ -196,7 +256,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('returns 404 when the requested participant identity has no recording', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     const { GET } = await importRoute();
 
@@ -214,7 +275,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('returns 503 when R2 is not configured at sign time', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     signGetUrlMock.mockRejectedValue(new FakeR2NotConfiguredError(['R2_BUCKET']));
     const { GET } = await importRoute();
@@ -230,7 +292,8 @@ describe('GET /api/sessions/[id]/recordings/audio', () => {
   });
 
   it('treats an empty `participant=` query value as a composite request', async () => {
-    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    authMock.mockResolvedValue({ user: { id: 'user-1', email: 'r@example.com' } });
+    scopedSessionsFindByIdMock.mockResolvedValue(makeScopedSessionRow());
     findSessionForReplayMock.mockResolvedValue(makeSessionRow());
     signGetUrlMock.mockResolvedValue('https://r2.example/composite.mp4?sig=z');
     const { GET } = await importRoute();
