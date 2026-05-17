@@ -20,6 +20,7 @@ import { clientEnv } from '@/lib/env';
 
 import { ControlBar } from './control-bar';
 import { DecisionLog } from './decision-log';
+import { InterventionModals } from './intervention-modals';
 import { LiveTranscript } from './live-transcript';
 import { ParticipantTiles } from './participant-tiles';
 import { SessionLifecycleControls } from './session-controls';
@@ -89,6 +90,7 @@ export default async function SessionDetailPage({
         />
 
         <ControlBar sessionId={session.id} status={session.status} />
+        <InterventionModals sessionId={session.id} status={session.status} />
 
         <ParticipantTiles sessionId={session.id} />
         <LiveTranscript sessionId={session.id} />
