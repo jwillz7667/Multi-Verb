@@ -93,7 +93,9 @@ from typing import TYPE_CHECKING, Protocol
 from verbio_engine.commands import (
     SPOKEN_COMMAND_TYPES,
     WHISPER_COMMAND_TYPE,
+    BudgetEffects,
     ControlEffects,
+    apply_budget_commands,
     apply_control_commands,
     build_manual_decision,
     build_whisper_decision,
@@ -116,7 +118,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from verbio_engine.commands import CommandBus, RuntimeControl
+    from verbio_engine.commands import BudgetControl, CommandBus, RuntimeControl
     from verbio_engine.decisions.dispatcher import ExecutionDispatcher
     from verbio_engine.domain.command import ResearcherCommand
     from verbio_engine.domain.session_state import SessionState
@@ -142,6 +144,7 @@ class DecisionTickListener:
     """`SnapshotListener` impl: drain commands → resolve → persist + publish."""
 
     __slots__ = (
+        "_budget_control",
         "_command_bus",
         "_cooldowns",
         "_executor_dispatcher",
@@ -162,6 +165,7 @@ class DecisionTickListener:
         command_bus: CommandBus | None = None,
         executor_dispatcher: ExecutionDispatcher | None = None,
         runtime_control: RuntimeControl | None = None,
+        budget_control: BudgetControl | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -187,13 +191,22 @@ class DecisionTickListener:
         # runtime is not driving the listener (most unit tests, and
         # any setup that doesn't accept control commands).
         self._runtime_control = runtime_control
+        # P5 L6: optional budget control surface. When wired AND a
+        # `set_quietness_budget` command is in the drained batch, the
+        # listener merges the patches FIFO and replaces the active
+        # budget on the state store. Production wires the same
+        # SessionRuntime for both `runtime_control` and `budget_control`;
+        # the surfaces are separate Protocols so tests can fake either
+        # without the other.
+        self._budget_control = budget_control
 
-    async def __call__(self, state: SessionState) -> None:  # noqa: PLR0912
-        # PLR0912: this method is the brief's §6 tick pipeline written
-        # top-to-bottom. Splitting it into helpers would scatter the
-        # order across the file without reducing total complexity —
-        # the order itself (audit → control → resolve → override →
-        # gate → persist → publish → dispatch) is the contract.
+    async def __call__(self, state: SessionState) -> None:  # noqa: PLR0912, PLR0915
+        # PLR0912/PLR0915: this method is the brief's §6 tick pipeline
+        # written top-to-bottom. Splitting it into helpers would scatter
+        # the order across the file without reducing total complexity —
+        # the order itself (audit → control → budget → resolve →
+        # override → gate → persist → publish → dispatch) is the
+        # contract.
         # P5 L2/L3/L4/L5: drain researcher commands at the top of the
         # tick so the audit row exists even if a later step in this
         # tick fails. Override commands (force_*, whisper) replace the
@@ -239,6 +252,34 @@ class DecisionTickListener:
                 paused_after=state.is_paused,
                 end_requested=False,
             )
+
+        # P5 L6: merge any `set_quietness_budget` patches onto the
+        # active budget. The new budget applies to tick T+1 — the
+        # resolver at tick T already consumed the snapshot projected
+        # before commands were drained, so we cannot retroactively
+        # gate THIS tick on the new cap. Researchers wanting an
+        # immediate clamp pair the patch with `mute_moderator`, which
+        # IS gated this tick via `effects.muted_after` above.
+        if commands and self._budget_control is not None:
+            budget_effects = apply_budget_commands(
+                commands=commands,
+                control=self._budget_control,
+                initial_budget=state.quietness_budget,
+            )
+            if budget_effects.applied:
+                log.info(
+                    "decisions.budget_commands_applied",
+                    session_id=str(state.session_id),
+                    tick_id=state.tick_id,
+                    applied_count=budget_effects.applied_count,
+                    max_utterances_per_10min=(budget_effects.budget_after.max_utterances_per_10min),
+                    min_seconds_between_utterances=(
+                        budget_effects.budget_after.min_seconds_between_utterances
+                    ),
+                    counts=dict(budget_effects.counts),
+                )
+        else:
+            budget_effects = BudgetEffects(budget_after=state.quietness_budget)
 
         override = first_overriding_command(commands)
 

@@ -13,6 +13,12 @@ Public surface:
   - `commands_stream_key`     : canonical Redis Stream key builder.
 """
 
+from verbio_engine.commands.budget import (
+    BUDGET_COMMAND_TYPES,
+    BudgetControl,
+    BudgetEffects,
+    apply_budget_commands,
+)
 from verbio_engine.commands.bus import (
     CommandBus,
     NullCommandBus,
@@ -37,16 +43,20 @@ from verbio_engine.commands.translator import (
 )
 
 __all__ = [
+    "BUDGET_COMMAND_TYPES",
     "CONTROL_COMMAND_TYPES",
     "MANUAL_COOLDOWN_SEC",
     "OVERRIDING_COMMAND_TYPES",
     "SPOKEN_COMMAND_TYPES",
     "WHISPER_COMMAND_TYPE",
+    "BudgetControl",
+    "BudgetEffects",
     "CommandBus",
     "ControlEffects",
     "NullCommandBus",
     "RedisCommandStreamBus",
     "RuntimeControl",
+    "apply_budget_commands",
     "apply_control_commands",
     "build_manual_decision",
     "build_whisper_decision",

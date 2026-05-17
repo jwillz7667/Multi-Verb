@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from verbio_engine.decisions import DecisionTickListener, ExecutionDispatcher
+from verbio_engine.domain.budget import QuietnessBudget
 from verbio_engine.domain.rules_config import RulesConfig
 from verbio_engine.domain.study import SessionConfigSnapshot
 from verbio_engine.embeddings import EmbeddingCoordinator
@@ -545,6 +546,11 @@ class SessionRuntime:
                 # path for control commands to arrive, so registering
                 # the control surface buys nothing.
                 runtime_control=self if self._command_bus is not None else None,
+                # P5 L6: same runtime is also the BudgetControl provider.
+                # `update_quietness_budget` lives on `SessionRuntime`
+                # alongside the mute/pause flips; the two Protocols are
+                # separate only so tests can fake them independently.
+                budget_control=self if self._command_bus is not None else None,
             )
         listener = _compose_tick_listeners(snapshot_listener, decision_listener)
         self._tick_loop = TickLoop(
@@ -742,6 +748,21 @@ class SessionRuntime:
             session_id=str(self._session_id) if self._session_id else None,
             reason=reason,
         )
+
+    # ----- BudgetControl surface (P5 L6) -------------------------------
+
+    def update_quietness_budget(self, budget: QuietnessBudget) -> None:
+        """Replace the live `QuietnessBudget` via the state store.
+
+        Same no-op-before-start guard as `set_muted` / `set_pause` —
+        researchers cannot issue commands before the bus is wired, so
+        a call here before the store exists is dead weight rather than
+        an error. The store keeps its frozen reference verbatim; the
+        next tick's snapshot projection picks up the new value.
+        """
+        if self._state_store is None:
+            return
+        self._state_store.update_quietness_budget(budget)
 
 
 def _compose_tick_listeners(
