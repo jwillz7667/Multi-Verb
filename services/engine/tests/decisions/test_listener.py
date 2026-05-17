@@ -44,19 +44,31 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class _RecordingAction:
-    """One observable event during a listener invocation."""
+    """One observable event during a listener invocation.
 
-    kind: str  # "decision_add" | "researcher_action_add" | "evals_add" | "flush" | "publish"
+    Kinds observed: "decision_add", "researcher_action_add",
+    "researcher_action_fk_update" (P5 L3 FK stamping), "evals_add",
+    "flush", "publish".
+    """
+
+    kind: str
     payload: object
 
 
+@dataclass(slots=True)
 class _FakeResult:
     """Stand-in for the SQLAlchemy `Result` returned by AsyncSession.execute.
 
-    The researcher_actions repo only calls `.scalar_one_or_none()` to decide
-    whether the command_id is already on file. Returning `None` means "no
-    row exists yet" so the repo will then INSERT.
+    Two execute paths in the listener:
+      * SELECT (researcher_actions idempotency check): caller uses
+        `.scalar_one_or_none()`. The fake reports "no row exists yet"
+        so the repo proceeds to INSERT.
+      * UPDATE (set_resulting_decision_id, P5 L3): caller reads
+        `.rowcount`. The fake reports a single row touched so the
+        listener's stamping logic considers the update successful.
     """
+
+    rowcount: int = 1
 
     def scalar_one_or_none(self) -> object | None:
         return None
@@ -93,10 +105,16 @@ class _FakeAsyncSession:
             raise RuntimeError(msg)
         self.actions.append(_RecordingAction("flush", instances or []))
 
-    async def execute(self, _stmt: object) -> _FakeResult:
-        # The researcher_actions repo issues a SELECT to test idempotency
-        # before INSERT; every command we feed in these tests is fresh so
-        # the fake reports "no existing row".
+    async def execute(self, stmt: object) -> _FakeResult:
+        # The researcher_actions repo issues either a SELECT
+        # (idempotency check before INSERT) or an UPDATE (P5 L3
+        # FK stamping). We sniff which by walking SQLAlchemy's
+        # statement attributes; matching the SUT's repo internals
+        # rather than the SQL class lets the fake stay decoupled
+        # from the import surface.
+        is_update = type(stmt).__name__ == "Update"
+        if is_update:
+            self.actions.append(_RecordingAction("researcher_action_fk_update", stmt))
         return _FakeResult()
 
     def begin(self) -> object:
@@ -688,3 +706,248 @@ class TestCommandDrain:
         decision_idx = kinds.index("decision_add")
         assert researcher_idx < decision_idx
         assert len(factory.spawned) == 2
+
+
+# ---------------------------------------------------------------------------
+# Manual override (P5 L3)
+# ---------------------------------------------------------------------------
+
+
+class TestManualOverride:
+    """Spoken researcher commands (force_*) override the resolver decision.
+
+    The drained spoken command becomes the moderator's decision for this
+    tick — bypassing cooldowns and the quietness budget — while the
+    resolver still runs and writes its rule_evaluations so the dashboard
+    can show what the rules would have done in parallel. The audit row
+    for the spoken command gets its `resulting_decision_id` stamped in
+    the same transaction as the decision insert.
+    """
+
+    async def test_force_prompt_overrides_resolver_decision(self) -> None:
+        # The resolver would have chosen `redirect_topic` from a firing
+        # rule, but the researcher pressed force_prompt — that wins.
+        firing = _StubRule(
+            name="firing_rule",
+            fires_after_tick=0,
+            proposed_action="redirect_topic",
+        )
+        target = uuid.uuid4()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={
+                "prompt": "ask Maria what she meant by too expensive",
+                "target_participant_id": str(target),
+            },
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "prompt_participant"
+        assert persisted.source == "researcher_manual"
+        assert persisted.triggering_rule is None
+        assert persisted.researcher_id == uuid.UUID(cmd.researcher_id)
+        assert persisted.researcher_hint == "ask Maria what she meant by too expensive"
+        assert persisted.reason_codes == ["researcher_command:force_prompt"]
+        assert persisted.confidence == pytest.approx(1.0)
+        assert persisted.suppressed_by == []
+
+    async def test_force_redirect_overrides_with_topic_as_hint(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_redirect",
+            payload={"topic": "let's talk about the price point"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "redirect_topic"
+        assert persisted.source == "researcher_manual"
+        assert persisted.researcher_hint == "let's talk about the price point"
+
+    async def test_force_summary_with_no_focus_translates_to_null_hint(self) -> None:
+        # `focus` is optional on force_summary; absence means
+        # "summarise the full thread", surfaced as a null hint.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_summary",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "summarize_thread"
+        assert persisted.source == "researcher_manual"
+        assert persisted.researcher_hint is None
+
+    async def test_override_reuses_resolver_decision_id_for_eval_fk_consistency(self) -> None:
+        # The brief's "Why quiet now?" panel filters rule_evaluations by
+        # decision_id. The override must keep the resolver's decision_id
+        # so the eval rows stay linked to the decision researchers see.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_redirect",
+            payload={"topic": "price"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        decision = next(a.payload for a in actions if a.kind == "decision_add")
+        eval_rows = next(a.payload for a in actions if a.kind == "evals_add")
+        assert isinstance(decision, Decision)
+        assert isinstance(eval_rows, list)
+        # Every eval row points at the same decision id the researcher sees.
+        assert all(r.decision_id == decision.id for r in eval_rows)
+
+    async def test_override_stamps_resulting_decision_id_on_audit_row(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={"prompt": "ask the quiet participant for input"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        # Exactly one FK update — for the spoken command.
+        fk_updates = [a for a in actions if a.kind == "researcher_action_fk_update"]
+        assert len(fk_updates) == 1
+        # Ordering: insert audit row first (T1), then decision + FK
+        # stamp (T2). The stamp must come *after* the decision insert
+        # within T2 so the FK can resolve.
+        kinds = [a.kind for a in actions]
+        assert kinds.index("researcher_action_add") < kinds.index("decision_add")
+        assert kinds.index("decision_add") < kinds.index("researcher_action_fk_update")
+
+    async def test_non_spoken_command_does_not_override_resolver(self) -> None:
+        # A flag_moment audits as a researcher_actions row but the
+        # resolver's decision stands. No FK update either — flag has no
+        # decision linkage.
+        firing = _StubRule(
+            name="firing_rule",
+            fires_after_tick=0,
+            proposed_action="prompt_participant",
+        )
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "interesting"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.source == "auto"
+        assert persisted.triggering_rule == "firing_rule"
+        # No FK update — flag_moment doesn't link to a decision.
+        assert not any(a.kind == "researcher_action_fk_update" for a in actions)
+
+    async def test_first_spoken_wins_under_fifo_when_multiple_drained(self) -> None:
+        # Brief §11.3: the command bus is ordered. If two force_*
+        # arrive in one tick, the earlier one is the decision; the
+        # later one is logged in researcher_actions with no linkage.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        first = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_redirect",
+            payload={"topic": "earlier"},
+        )
+        second = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={"prompt": "later"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[first, second]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "redirect_topic"
+        assert persisted.researcher_hint == "earlier"
+        # Only the first spoken's audit row gets the FK stamp.
+        fk_updates = [a for a in actions if a.kind == "researcher_action_fk_update"]
+        assert len(fk_updates) == 1
+
+    async def test_manual_decision_is_dispatched_to_executor(self) -> None:
+        # The P4 L8 gate was `source == "auto"`. P5 L3 broadens it to
+        # `{"auto", "researcher_manual"}` so the force_* path also runs
+        # through the mouth/TTS pipeline (the mouth uses
+        # researcher_hint to phrase what researchers asked for).
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={"prompt": "ask alice for her take"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        dispatcher = _RecordingDispatcher()
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0))
+
+        assert len(dispatcher.dispatched) == 1
+        dispatched_decision, _dispatched_state = dispatcher.dispatched[0]
+        assert dispatched_decision.action == "prompt_participant"  # type: ignore[attr-defined]
+        assert dispatched_decision.source == "researcher_manual"  # type: ignore[attr-defined]
+
+    async def test_manual_override_does_not_update_cooldown_map(self) -> None:
+        # Manual decisions have no `triggering_rule`, so they don't
+        # debit the auto-rule cooldown budget. The next auto tick
+        # should still see the firing rule as fireable.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_redirect",
+            payload={"topic": "anything"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, _actions, _factory, _pub = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+        # Without a manual override on the next tick, the auto rule
+        # should win — proving its cooldown wasn't bumped.
+        # Drain second tick with no commands queued; the same bus
+        # returns empty for the second drain call.
+        next_actions: list[_RecordingAction] = []
+        # Swap actions list to isolate second-tick observations.
+        listener._publisher.actions = next_actions  # type: ignore[attr-defined]
+        # Reuse fakes for the second tick by re-binding the listener's
+        # session_factory to a fresh one.
+        new_factory = _FakeSessionFactory(actions=next_actions)
+        listener._session_factory = new_factory  # type: ignore[assignment]
+
+        await listener(_state(tick_id=1, t=TICK_ZERO + timedelta(seconds=10)))
+
+        second = next(a.payload for a in next_actions if a.kind == "decision_add")
+        assert isinstance(second, Decision)
+        assert second.source == "auto"
+        assert second.triggering_rule == "firing_rule"

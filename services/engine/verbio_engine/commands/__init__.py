@@ -19,10 +19,20 @@ from verbio_engine.commands.bus import (
     RedisCommandStreamBus,
     commands_stream_key,
 )
+from verbio_engine.commands.translator import (
+    MANUAL_COOLDOWN_SEC,
+    SPOKEN_COMMAND_TYPES,
+    build_manual_decision,
+    first_spoken_command,
+)
 
 __all__ = [
+    "MANUAL_COOLDOWN_SEC",
+    "SPOKEN_COMMAND_TYPES",
     "CommandBus",
     "NullCommandBus",
     "RedisCommandStreamBus",
+    "build_manual_decision",
     "commands_stream_key",
+    "first_spoken_command",
 ]

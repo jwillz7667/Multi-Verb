@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from verbio_engine.persistence.models import ResearcherAction
 
@@ -86,6 +86,32 @@ class ResearcherActionRepo:
         self._session.add(row)
         await self._session.flush([row])
         return row
+
+    async def set_resulting_decision_id(
+        self,
+        *,
+        command_id: uuid.UUID,
+        decision_id: uuid.UUID,
+    ) -> int:
+        """Stamp `resulting_decision_id` on an existing audit row (P5 L3).
+
+        Returns the number of rows updated — 0 means the audit row wasn't
+        found (likely because `_persist_commands` skipped it due to a
+        malformed researcher_id), which the caller can ignore. Issued in
+        the decision transaction so the FK lands atomically with the
+        decision row it points at.
+        """
+        stmt = (
+            update(ResearcherAction)
+            .where(ResearcherAction.id == command_id)
+            .values(resulting_decision_id=decision_id)
+        )
+        result = await self._session.execute(stmt)
+        # AsyncSession.execute returns Result[Any]; DML statements
+        # actually yield a CursorResult that exposes rowcount. The static
+        # type isn't narrowed, so getattr keeps mypy strict-happy while
+        # preserving the actual runtime semantics.
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def _fetch(self, command_id: uuid.UUID) -> ResearcherAction | None:
         stmt = select(ResearcherAction).where(ResearcherAction.id == command_id)
