@@ -80,6 +80,14 @@ const serverSchema = clientSchema.extend({
   // Server-side URL — wss:// for browsers, can also accept https://
   // for Agent dispatch REST calls (the SDK normalises internally).
   LIVEKIT_URL: optionalUrl,
+
+  // Shared secret the retention cron uses to authenticate itself
+  // against `POST /api/admin/retention/run`. Vercel Cron sends this
+  // as `Authorization: Bearer ${CRON_SECRET}`. Optional in dev so
+  // tests + local invocations don't need to set it; the route 503s
+  // when the var is missing so we don't accidentally expose an
+  // unauthenticated retention sweep.
+  CRON_SECRET: optionalSecret,
 });
 
 export type ClientEnv = z.infer<typeof clientSchema>;

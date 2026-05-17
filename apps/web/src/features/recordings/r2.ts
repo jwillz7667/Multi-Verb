@@ -27,7 +27,7 @@
 
 import 'server-only';
 
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { serverEnv } from '@/lib/env';
@@ -142,6 +142,65 @@ export async function signGetUrl(
   const command = new GetObjectCommand({ Bucket: bucket, Key: key });
   return getSignedUrl(client, command, { expiresIn: ttl });
 }
+
+/**
+ * Bulk-delete a list of R2 keys.
+ *
+ * Used by the retention job to evict expired recordings — the runner
+ * passes in the composite + per-participant track keys for a session
+ * past its `recordingsTTLDays` and we issue the S3 `DeleteObjects`
+ * command in batches of 1,000 (the protocol cap).
+ *
+ * Returns a per-call summary rather than throwing on partial failure:
+ * a delete that finds no object is reported as success by S3, and we
+ * want the caller to keep going (and null the pointer) even if one of
+ * the per-participant tracks couldn't be removed. Hard transport
+ * errors still throw — those usually mean creds are gone, not "one
+ * object is missing".
+ *
+ * Throws `R2NotConfiguredError` if env is missing.
+ * Throws `R2KeyInvalidError` if any key is empty / starts with `/`.
+ */
+export async function deleteR2Keys(
+  keys: readonly string[],
+): Promise<{ deleted: number; errors: string[] }> {
+  if (keys.length === 0) return { deleted: 0, errors: [] };
+
+  for (const key of keys) {
+    if (key.length === 0) throw new R2KeyInvalidError('R2 key must not be empty');
+    if (key.startsWith('/')) throw new R2KeyInvalidError(`R2 key must not start with '/': ${key}`);
+  }
+
+  const { client, bucket } = getR2Client();
+  let deleted = 0;
+  const errors: string[] = [];
+
+  // S3 `DeleteObjects` caps the per-request object list at 1,000.
+  // Chunk to honour that even though a session's recordings rarely
+  // approach the cap.
+  for (let i = 0; i < keys.length; i += R2_DELETE_BATCH) {
+    const batch = keys.slice(i, i + R2_DELETE_BATCH);
+    const command = new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: batch.map((k) => ({ Key: k })),
+        // `Quiet: true` would suppress the per-object Deleted entries
+        // in the response; we keep them so we can count exactly how
+        // many R2 confirmed gone.
+        Quiet: false,
+      },
+    });
+    const response = await client.send(command);
+    deleted += response.Deleted?.length ?? 0;
+    for (const err of response.Errors ?? []) {
+      errors.push(`${err.Key ?? '(unknown key)'}: ${err.Code ?? 'Unknown'} ${err.Message ?? ''}`);
+    }
+  }
+
+  return { deleted, errors };
+}
+
+const R2_DELETE_BATCH = 1_000;
 
 /**
  * Construct a canonical R2 key for a session-scoped artifact.

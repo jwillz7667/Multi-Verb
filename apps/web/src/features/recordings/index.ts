@@ -13,7 +13,7 @@ export {
   R2NotConfiguredError,
   WebhookSignatureError,
 } from './errors';
-export { getR2Client, sessionObjectKey, signGetUrl } from './r2';
+export { deleteR2Keys, getR2Client, sessionObjectKey, signGetUrl } from './r2';
 export { parseParticipantRecordingUrls } from './replay-urls';
 export {
   createPrismaWebhookRecordingsRepo,
