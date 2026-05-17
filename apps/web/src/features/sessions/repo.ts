@@ -235,6 +235,171 @@ export async function listStateSnapshotsSince(
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Decisions — moderator audit log (brief §10.1, Phase 3 L12).
+// ---------------------------------------------------------------------------
+
+export interface DecisionRow {
+  id: string;
+  sessionId: string;
+  tickId: bigint;
+  ts: Date;
+  action: string;
+  targetParticipantId: string | null;
+  source: string;
+  triggeringRule: string | null;
+  researcherId: string | null;
+  researcherHint: string | null;
+  reasonCodes: string[];
+  reasonHuman: string;
+  confidence: number | null;
+  suppressedBy: string[];
+  wasExecuted: boolean;
+  // JSONB column. The engine only ever writes a top-level object (the
+  // serialised prompt + decision context), so the row type is narrowed
+  // to `Record<string, unknown> | null` rather than the broader
+  // `Prisma.JsonValue` — callers shape it directly into the wire envelope.
+  llmPrompt: Record<string, unknown> | null;
+  llmOutput: string | null;
+  ttsAudioUrl: string | null;
+  spokenAt: Date | null;
+  cooldownUntil: Date;
+}
+
+interface DecisionBackfillOptions {
+  afterDecisionId?: string;
+  limit?: number;
+}
+
+/**
+ * Backfill `decisions` since the SSE `Last-Event-ID` cursor.
+ *
+ * The engine writes one decision per tick (shadow mode: every tick is
+ * `stay_silent` with the firing-rule audit trail attached). On
+ * reconnect the dashboard echoes the last decision envelope id; we
+ * resolve it to its `(ts, id)` cursor and return everything that
+ * followed in stable order. The `(session_id, ts)` index covers it
+ * cheaply.
+ *
+ * Default `limit` is 240 rows — 2 minutes of decisions at 2 Hz, in
+ * line with the snapshot backfill cap. The dashboard's decision log
+ * pages older rows on demand.
+ */
+export async function listDecisionsSince(
+  sessionId: string,
+  options: DecisionBackfillOptions = {},
+): Promise<DecisionRow[]> {
+  const limit = options.limit ?? 240;
+
+  let cursorTs: Date | null = null;
+  let cursorId: string | null = null;
+  if (options.afterDecisionId !== undefined) {
+    const cursor = await db.decision.findUnique({
+      where: { id: options.afterDecisionId },
+      select: { id: true, ts: true, sessionId: true },
+    });
+    // Cross-session smuggling guard — mirrors the utterance + snapshot paths.
+    if (cursor !== null && cursor.sessionId === sessionId) {
+      cursorTs = cursor.ts;
+      cursorId = cursor.id;
+    }
+  }
+
+  const rows = await db.decision.findMany({
+    where: {
+      sessionId,
+      ...(cursorTs !== null && cursorId !== null
+        ? {
+            OR: [{ ts: { gt: cursorTs } }, { AND: [{ ts: cursorTs }, { id: { gt: cursorId } }] }],
+          }
+        : {}),
+    },
+    orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+    take: limit,
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    action: row.action,
+    targetParticipantId: row.targetParticipantId,
+    source: row.source,
+    triggeringRule: row.triggeringRule,
+    researcherId: row.researcherId,
+    researcherHint: row.researcherHint,
+    reasonCodes: row.reasonCodes,
+    reasonHuman: row.reasonHuman,
+    confidence: row.confidence,
+    suppressedBy: row.suppressedBy,
+    wasExecuted: row.wasExecuted,
+    // Prisma's JsonValue is broader than what the engine actually writes
+    // (top-level object only). Narrow here at the persistence boundary
+    // so downstream consumers see the canonical wire shape.
+    llmPrompt: row.llmPrompt as Record<string, unknown> | null,
+    llmOutput: row.llmOutput,
+    ttsAudioUrl: row.ttsAudioUrl,
+    spokenAt: row.spokenAt,
+    cooldownUntil: row.cooldownUntil,
+  }));
+}
+
+export interface RuleEvaluationRow {
+  id: string;
+  decisionId: string;
+  ruleName: string;
+  ruleVersion: string;
+  fired: boolean;
+  suppressedReason: string | null;
+  predicateInputs: unknown;
+  confidence: number;
+}
+
+/**
+ * Resolve a decision id to its owning session id.
+ *
+ * The "Why quiet now?" endpoint needs this to enforce session-scoped
+ * access before exposing a decision's `rule_evaluations`: a crafted
+ * request must never reveal evaluations from a different session.
+ * Returns null when the decision is unknown.
+ */
+export async function findDecisionSessionId(decisionId: string): Promise<string | null> {
+  const row = await db.decision.findUnique({
+    where: { id: decisionId },
+    select: { sessionId: true },
+  });
+  return row?.sessionId ?? null;
+}
+
+/**
+ * Fetch every `rule_evaluations` row for a given decision.
+ *
+ * The "Why quiet now?" panel renders the per-rule verdict (fired vs.
+ * suppressed + reason) for the most recent decision. Decision events
+ * on the wire don't carry evaluations (too verbose for every tick at
+ * 2 Hz); the panel pulls them on demand when the user opens the
+ * inspector for a row.
+ */
+export async function listRuleEvaluationsForDecision(
+  decisionId: string,
+): Promise<RuleEvaluationRow[]> {
+  const rows = await db.ruleEvaluation.findMany({
+    where: { decisionId },
+    orderBy: [{ ruleName: 'asc' }],
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    decisionId: row.decisionId,
+    ruleName: row.ruleName,
+    ruleVersion: row.ruleVersion,
+    fired: row.fired,
+    suppressedReason: row.suppressedReason,
+    predicateInputs: row.predicateInputs,
+    confidence: row.confidence,
+  }));
+}
+
 export async function listUtterancesSince(
   sessionId: string,
   options: BackfillOptions = {},

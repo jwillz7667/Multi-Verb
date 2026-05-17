@@ -61,7 +61,9 @@ describe('transcriptEventSchema', () => {
   });
 
   it('rejects an unknown type literal (discriminated union)', () => {
-    const result = transcriptEventSchema.safeParse({ ...VALID_EVENT, type: 'decision' });
+    // `decision` is a valid variant since Phase 3 L12; use a sentinel
+    // that no envelope class would ever claim.
+    const result = transcriptEventSchema.safeParse({ ...VALID_EVENT, type: 'unknown_variant' });
     expect(result.success).toBe(false);
   });
 
@@ -252,6 +254,112 @@ describe('transcriptEventSchema — state_snapshot variant', () => {
       payload: {
         ...VALID_SNAPSHOT_EVENT.payload,
         state: { ...VALID_SNAPSHOT_EVENT.payload.state, tick_id: -1 },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Decision variant (Phase 3 L12) — shadow-mode wire shape.
+// ---------------------------------------------------------------------------
+
+const VALID_DECISION_EVENT = {
+  type: 'decision' as const,
+  id: '44444444-4444-4444-8444-444444444444',
+  session_id: '11111111-1111-4111-8111-111111111111',
+  ts: '2026-05-16T12:34:56.500Z',
+  payload: {
+    decision: {
+      decision_id: '44444444-4444-4444-8444-444444444444',
+      session_id: '11111111-1111-4111-8111-111111111111',
+      tick_id: 17,
+      timestamp: '2026-05-16T12:34:56.500Z',
+      action: 'stay_silent' as const,
+      target_participant_id: null,
+      source: 'auto' as const,
+      triggering_rule: null,
+      researcher_id: null,
+      researcher_hint: null,
+      reason_codes: [],
+      reason_human: '',
+      confidence: 0.0,
+      suppressed_by: ['quietness_budget'],
+      was_executed: false,
+      llm_prompt: null,
+      llm_output: null,
+      tts_audio_url: null,
+      spoken_at: null,
+      cooldown_until: '2026-05-16T12:34:56.500Z',
+    },
+  },
+};
+
+describe('transcriptEventSchema — decision variant', () => {
+  it('accepts a well-formed shadow-mode stay_silent decision', () => {
+    const parsed = transcriptEventSchema.parse(VALID_DECISION_EVENT);
+    if (parsed.type !== 'decision') throw new Error('expected decision variant');
+    expect(parsed.payload.decision.action).toBe('stay_silent');
+    expect(parsed.payload.decision.was_executed).toBe(false);
+    expect(parsed.payload.decision.suppressed_by).toEqual(['quietness_budget']);
+  });
+
+  it('accepts an auto-source decision with a triggering rule + target', () => {
+    const result = transcriptEventSchema.safeParse({
+      ...VALID_DECISION_EVENT,
+      payload: {
+        decision: {
+          ...VALID_DECISION_EVENT.payload.decision,
+          action: 'prompt_participant',
+          triggering_rule: 'unheard_participant',
+          target_participant_id: '22222222-2222-4222-8222-222222222222',
+          confidence: 0.78,
+          reason_codes: ['p2_unheard_240s'],
+          reason_human: "Maya hasn't spoken in 4 minutes.",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown action enum value', () => {
+    const result = transcriptEventSchema.safeParse({
+      ...VALID_DECISION_EVENT,
+      payload: {
+        decision: { ...VALID_DECISION_EVENT.payload.decision, action: 'pirouette' },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unknown envelope keys on the decision variant', () => {
+    const result = transcriptEventSchema.safeParse({ ...VALID_DECISION_EVENT, extra: 'nope' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unknown payload keys on the decision variant', () => {
+    const result = transcriptEventSchema.safeParse({
+      ...VALID_DECISION_EVENT,
+      payload: { ...VALID_DECISION_EVENT.payload, sneaky: 'field' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects confidence outside [0, 1]', () => {
+    const result = transcriptEventSchema.safeParse({
+      ...VALID_DECISION_EVENT,
+      payload: {
+        decision: { ...VALID_DECISION_EVENT.payload.decision, confidence: 1.4 },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a negative tick_id on the decision', () => {
+    const result = transcriptEventSchema.safeParse({
+      ...VALID_DECISION_EVENT,
+      payload: {
+        decision: { ...VALID_DECISION_EVENT.payload.decision, tick_id: -1 },
       },
     });
     expect(result.success).toBe(false);

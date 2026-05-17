@@ -7,7 +7,10 @@
 
 /* eslint-disable */
 
-export type TranscriptEvent = UtteranceEventEnvelope | StateSnapshotEventEnvelope;
+export type TranscriptEvent =
+  | UtteranceEventEnvelope
+  | StateSnapshotEventEnvelope
+  | DecisionEventEnvelope;
 export type Id = string;
 export type Confidence = number | null;
 export type EndTs = string;
@@ -32,6 +35,10 @@ export type CurrentlySpeakingCount = number;
  * (t - started_at) in seconds; precomputed for convenience.
  */
 export type ElapsedSec = number;
+/**
+ * Model identifier that produced both embeddings on this snapshot. Persisted into state snapshots so replay can refuse a cross-model comparison.
+ */
+export type EmbeddingModelName = string | null;
 /**
  * Set by `pause_session`; the tick loop still runs but the moderator is suppressed from speaking.
  */
@@ -129,6 +136,10 @@ export type MinSecondsBetweenUtterances = number;
  */
 export type RollingGlobalTranscript2Min = string;
 /**
+ * Vector of the last ~30s of group transcript. Refreshed by the state store on each speech-finalization event; lags the raw transcript field by one embed round-trip. None until enough transcript has accumulated to embed.
+ */
+export type RollingTranscript30SEmbedding = number[] | null;
+/**
  * Planned end time; powers `time_remaining_pressure` rule.
  */
 export type ScheduledEndAt = string | null;
@@ -142,6 +153,14 @@ export type SilenceRunSec = number;
  */
 export type StartedAt = string;
 /**
+ * The researcher's framing prompt for this study; embedded once at session load and reused for similarity comparisons.
+ */
+export type StudyPrompt = string;
+/**
+ * Vector representation of `study_prompt`. None until the state store has run the embedding call; rules MUST handle the None case (typically: don't fire) so a transient provider outage doesn't fabricate false positives.
+ */
+export type StudyPromptEmbedding = number[] | null;
+/**
  * Wall-clock for the current tick.
  */
 export type T = string;
@@ -152,6 +171,60 @@ export type TickId = number;
 export type SessionId3 = string;
 export type Ts1 = string;
 export type Type1 = 'state_snapshot';
+export type Id2 = string;
+export type Action =
+  | 'stay_silent'
+  | 'prompt_participant'
+  | 'redirect_topic'
+  | 'summarize_thread'
+  | 'request_clarification'
+  | 'suggest_turn_taking'
+  | 'close_session';
+export type Confidence1 = number;
+export type CooldownUntil = string;
+export type DecisionId = string;
+export type LlmOutput = string | null;
+/**
+ * Verbatim mouth-layer input; tightened to a typed shape in Phase 4.
+ */
+export type LlmPrompt = {
+  [k: string]: unknown | undefined;
+} | null;
+/**
+ * Structured codes, e.g. ['silence_gap_8s', 'p3_unheard_4min'].
+ */
+export type ReasonCodes = string[];
+/**
+ * Generated single-sentence rationale shown on the dashboard.
+ */
+export type ReasonHuman = string;
+/**
+ * Free-text guidance from a manual researcher command.
+ */
+export type ResearcherHint = string | null;
+export type ResearcherId = string | null;
+export type SessionId4 = string;
+export type Source = 'auto' | 'researcher_manual' | 'researcher_whisper';
+export type SpokenAt1 = string | null;
+/**
+ * ['quietness_budget', 'global_cooldown', 'lower_priority_won', ...].
+ */
+export type SuppressedBy = string[];
+export type TargetParticipantId = string | null;
+/**
+ * Monotonic per-session tick counter.
+ */
+export type TickId1 = number;
+export type Timestamp = string;
+/**
+ * Rule name when source='auto'; null otherwise.
+ */
+export type TriggeringRule = string | null;
+export type TtsAudioUrl = string | null;
+export type WasExecuted = boolean;
+export type SessionId5 = string;
+export type Ts2 = string;
+export type Type2 = 'decision';
 
 /**
  * SSE envelope for an STT-derived utterance.
@@ -226,15 +299,19 @@ export interface StateSnapshotEventPayload {
 export interface SessionState {
   currently_speaking_count?: CurrentlySpeakingCount;
   elapsed_sec: ElapsedSec;
+  embedding_model_name?: EmbeddingModelName;
   is_paused?: IsPaused;
   moderator_muted?: ModeratorMuted;
   participants?: Participants;
   quietness_budget?: QuietnessBudget;
   rolling_global_transcript_2min?: RollingGlobalTranscript2Min;
+  rolling_transcript_30s_embedding?: RollingTranscript30SEmbedding;
   scheduled_end_at?: ScheduledEndAt;
   session_id: SessionId2;
   silence_run_sec?: SilenceRunSec;
   started_at: StartedAt;
+  study_prompt?: StudyPrompt;
+  study_prompt_embedding?: StudyPromptEmbedding;
   t: T;
   tick_id: TickId;
 }
@@ -297,4 +374,67 @@ export interface QuietnessBudget {
   last_utterance_at?: LastUtteranceAt;
   max_utterances_per_10min?: MaxUtterancesPer10Min;
   min_seconds_between_utterances?: MinSecondsBetweenUtterances;
+}
+/**
+ * SSE envelope for one per-tick moderator decision.
+ *
+ * `id` mirrors the `decisions.id` UUID as a string so the web SSE
+ * route's Last-Event-ID backfill maps it straight to the row. `ts`
+ * is the tick wall-clock (`decision.timestamp`) so the client can
+ * order across reconnects without unwrapping the payload.
+ */
+export interface DecisionEventEnvelope {
+  id: Id2;
+  payload: DecisionEventPayload;
+  session_id: SessionId5;
+  ts: Ts2;
+  type: Type2;
+}
+/**
+ * Snapshot of one moderator decision at the moment it was persisted.
+ *
+ * Carries the full `ModeratorDecision` plus the DB row id (`decision_id`
+ * matches `decisions.id`). The dashboard's decision log + "Why quiet
+ * now?" panel render from this payload alone — no second trip to
+ * Postgres for the common case.
+ *
+ * In shadow mode (Phase 3) `was_executed` is always False and the
+ * mouth-layer fields (`llm_prompt`, `llm_output`, `tts_audio_url`,
+ * `spoken_at`) are all None. The envelope ships anyway so the
+ * dashboard can show the silent-decision stream while researchers
+ * review.
+ */
+export interface DecisionEventPayload {
+  decision: ModeratorDecision;
+}
+/**
+ * Single decision record from one tick of the engine.
+ *
+ * Invariants enforced elsewhere (`verbio_engine.tick_loop`):
+ *   * `was_executed` is True only for non-silent actions that completed
+ *     before the latency budget elapsed.
+ *   * `cooldown_until` is computed from the triggering rule's
+ *     `default_cooldown_sec`; researcher overrides may extend it.
+ */
+export interface ModeratorDecision {
+  action: Action;
+  confidence?: Confidence1;
+  cooldown_until: CooldownUntil;
+  decision_id: DecisionId;
+  llm_output?: LlmOutput;
+  llm_prompt?: LlmPrompt;
+  reason_codes?: ReasonCodes;
+  reason_human?: ReasonHuman;
+  researcher_hint?: ResearcherHint;
+  researcher_id?: ResearcherId;
+  session_id: SessionId4;
+  source: Source;
+  spoken_at?: SpokenAt1;
+  suppressed_by?: SuppressedBy;
+  target_participant_id?: TargetParticipantId;
+  tick_id: TickId1;
+  timestamp: Timestamp;
+  triggering_rule?: TriggeringRule;
+  tts_audio_url?: TtsAudioUrl;
+  was_executed?: WasExecuted;
 }

@@ -14,14 +14,25 @@ export {
   startSession,
 } from './service';
 export {
+  findDecisionSessionId,
   findSessionById,
+  listDecisionsSince,
   listRecentSessions,
+  listRuleEvaluationsForDecision,
   listStateSnapshotsSince,
   listUtterancesSince,
 } from './repo';
-export type { ModeratedSessionRow, StateSnapshotRow, UtteranceWithSpeakerRow } from './repo';
+export type {
+  DecisionRow,
+  ModeratedSessionRow,
+  RuleEvaluationRow,
+  StateSnapshotRow,
+  UtteranceWithSpeakerRow,
+} from './repo';
 export { parseTranscriptEvent, transcriptEventSchema } from './events';
 export type {
+  DecisionTranscriptEvent,
+  ModeratorDecisionValidated,
   StateSnapshotTranscriptEvent,
   TranscriptEventInput,
   TranscriptEventValidated,

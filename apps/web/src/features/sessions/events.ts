@@ -164,12 +164,75 @@ const stateSnapshotEventSchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
+// Decision variant (Phase 3 L12)
+// ---------------------------------------------------------------------------
+
+// Mirrors `verbio_engine.domain.decision.DecisionAction` / `DecisionSource`.
+// Order matches the Pydantic Literal; CI's shared-types check fails on drift.
+const decisionActionEnum = z.enum([
+  'stay_silent',
+  'prompt_participant',
+  'redirect_topic',
+  'summarize_thread',
+  'request_clarification',
+  'suggest_turn_taking',
+  'close_session',
+]);
+const decisionSourceEnum = z.enum(['auto', 'researcher_manual', 'researcher_whisper']);
+
+// Pydantic emits every field (`model_dump(mode="json")`), defaults and
+// all — so optionals on the generated TS are required-and-present on
+// the wire. Mirrors the utterance variant's policy.
+const moderatorDecisionSchema = z.object({
+  decision_id: z.string().uuid(),
+  session_id: z.string().uuid(),
+  tick_id: z.number().int().nonnegative(),
+  timestamp: isoDateTime,
+  action: decisionActionEnum,
+  target_participant_id: z.string().nullable(),
+  source: decisionSourceEnum,
+  triggering_rule: z.string().nullable(),
+  researcher_id: z.string().nullable(),
+  researcher_hint: z.string().nullable(),
+  reason_codes: z.array(z.string()),
+  reason_human: z.string(),
+  // confidence is required-with-bounds on auto decisions but nullable
+  // on researcher manuals; the resolver always emits a 0.0 default for
+  // stay_silent. Allowing null here matches the Pydantic shape.
+  confidence: z.number().min(0).max(1).nullable(),
+  suppressed_by: z.array(z.string()),
+  was_executed: z.boolean(),
+  llm_prompt: z.record(z.string(), z.unknown()).nullable(),
+  llm_output: z.string().nullable(),
+  tts_audio_url: z.string().nullable(),
+  spoken_at: isoDateTime.nullable(),
+  cooldown_until: isoDateTime,
+});
+
+const decisionPayloadSchema = z
+  .object({
+    decision: moderatorDecisionSchema,
+  })
+  .strict();
+
+const decisionEventSchema = z
+  .object({
+    type: z.literal('decision'),
+    id: z.string().min(1),
+    session_id: z.string().uuid(),
+    ts: isoDateTime,
+    payload: decisionPayloadSchema,
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Union + public surface
 // ---------------------------------------------------------------------------
 
 export const transcriptEventSchema = z.discriminatedUnion('type', [
   utteranceEventSchema,
   stateSnapshotEventSchema,
+  decisionEventSchema,
 ]);
 
 export type TranscriptEventInput = z.input<typeof transcriptEventSchema>;
@@ -180,6 +243,8 @@ export type StateSnapshotTranscriptEvent = Extract<
   TranscriptEventValidated,
   { type: 'state_snapshot' }
 >;
+export type DecisionTranscriptEvent = Extract<TranscriptEventValidated, { type: 'decision' }>;
+export type ModeratorDecisionValidated = z.output<typeof moderatorDecisionSchema>;
 
 /**
  * Compile-time guard for the utterance variant — if Pydantic changes

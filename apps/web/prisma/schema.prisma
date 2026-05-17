@@ -119,6 +119,7 @@ model ModeratedSession {
   participants   Participant[]
   utterances     Utterance[]
   stateSnapshots StateSnapshot[]
+  decisions      Decision[]
 
   @@index([studyId], map: "ix_sessions_study_id")
   @@index([status], map: "ix_sessions_status")
@@ -134,8 +135,9 @@ model Participant {
   leftAt          DateTime? @map("left_at") @db.Timestamptz(6)
   livekitIdentity String    @map("livekit_identity")
 
-  session    ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_participants_session_id_sessions")
-  utterances Utterance[]
+  session            ModeratedSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_participants_session_id_sessions")
+  utterances         Utterance[]
+  targetedDecisions  Decision[]
 
   @@unique([sessionId, livekitIdentity], map: "uq_participants_session_id_livekit_identity")
   @@index([sessionId], map: "ix_participants_session_id")
@@ -178,4 +180,62 @@ model StateSnapshot {
 
   @@index([sessionId, tickId], map: "ix_state_snapshots_session_id_tick_id")
   @@map("state_snapshots")
+}
+
+// ============================================================================
+// Decisions + rule evaluations — moderator audit trail (brief §10.1).
+// Mirror of Alembic migration 0005_decisions_rule_evals (engine side).
+// The dashboard's decision log and "Why quiet now?" panel read these
+// directly via the SSE backfill route.
+// ============================================================================
+
+model Decision {
+  id                  String    @id @default(uuid()) @db.Uuid
+  sessionId           String    @map("session_id") @db.Uuid
+  tickId              BigInt    @map("tick_id")
+  ts                  DateTime  @db.Timestamptz(6)
+  action              String
+  targetParticipantId String?   @map("target_participant_id") @db.Uuid
+  source              String
+  triggeringRule      String?   @map("triggering_rule")
+  researcherId        String?   @map("researcher_id") @db.Uuid
+  researcherHint      String?   @map("researcher_hint")
+  // text[] in Postgres; Prisma maps natively as `String[]`.
+  reasonCodes         String[]  @default([]) @map("reason_codes")
+  reasonHuman         String    @default("") @map("reason_human")
+  confidence          Float?    @db.Real
+  suppressedBy        String[]  @default([]) @map("suppressed_by")
+  wasExecuted         Boolean   @map("was_executed")
+  llmPrompt           Json?     @map("llm_prompt") @db.JsonB
+  llmOutput           String?   @map("llm_output")
+  ttsAudioUrl         String?   @map("tts_audio_url")
+  spokenAt            DateTime? @map("spoken_at") @db.Timestamptz(6)
+  cooldownUntil       DateTime  @map("cooldown_until") @db.Timestamptz(6)
+
+  session            ModeratedSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade, map: "fk_decisions_session_id_sessions")
+  targetParticipant  Participant?      @relation(fields: [targetParticipantId], references: [id], onDelete: SetNull, map: "fk_decisions_target_participant_id_participants")
+  ruleEvaluations    RuleEvaluation[]
+
+  @@index([sessionId, ts], map: "ix_decisions_session_id_ts")
+  // Partial index — `was_executed = true` only, per migration. Prisma
+  // can't model partial indexes, but the @@index declaration keeps the
+  // composite covered for type-level reasoning.
+  @@index([sessionId, wasExecuted], map: "ix_decisions_session_id_was_executed_true")
+  @@map("decisions")
+}
+
+model RuleEvaluation {
+  id               String  @id @default(uuid()) @db.Uuid
+  decisionId       String  @map("decision_id") @db.Uuid
+  ruleName         String  @map("rule_name")
+  ruleVersion      String  @map("rule_version")
+  fired            Boolean
+  suppressedReason String? @map("suppressed_reason")
+  predicateInputs  Json    @default("{}") @map("predicate_inputs") @db.JsonB
+  confidence       Float   @default(0.0) @db.Real
+
+  decision Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade, map: "fk_rule_evaluations_decision_id_decisions")
+
+  @@index([decisionId], map: "ix_rule_evaluations_decision_id")
+  @@map("rule_evaluations")
 }

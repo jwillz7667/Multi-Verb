@@ -16,6 +16,10 @@ export type CurrentlySpeakingCount = number;
  */
 export type ElapsedSec = number;
 /**
+ * Model identifier that produced both embeddings on this snapshot. Persisted into state snapshots so replay can refuse a cross-model comparison.
+ */
+export type EmbeddingModelName = string | null;
+/**
  * Set by `pause_session`; the tick loop still runs but the moderator is suppressed from speaking.
  */
 export type IsPaused = boolean;
@@ -112,6 +116,10 @@ export type MinSecondsBetweenUtterances = number;
  */
 export type RollingGlobalTranscript2Min = string;
 /**
+ * Vector of the last ~30s of group transcript. Refreshed by the state store on each speech-finalization event; lags the raw transcript field by one embed round-trip. None until enough transcript has accumulated to embed.
+ */
+export type RollingTranscript30SEmbedding = number[] | null;
+/**
  * Planned end time; powers `time_remaining_pressure` rule.
  */
 export type ScheduledEndAt = string | null;
@@ -124,6 +132,14 @@ export type SilenceRunSec = number;
  * Wall-clock when the session opened.
  */
 export type StartedAt = string;
+/**
+ * The researcher's framing prompt for this study; embedded once at session load and reused for similarity comparisons.
+ */
+export type StudyPrompt = string;
+/**
+ * Vector representation of `study_prompt`. None until the state store has run the embedding call; rules MUST handle the None case (typically: don't fire) so a transient provider outage doesn't fabricate false positives.
+ */
+export type StudyPromptEmbedding = number[] | null;
 /**
  * Wall-clock for the current tick.
  */
@@ -139,15 +155,19 @@ export type TickId = number;
 export interface SessionState {
   currently_speaking_count?: CurrentlySpeakingCount;
   elapsed_sec: ElapsedSec;
+  embedding_model_name?: EmbeddingModelName;
   is_paused?: IsPaused;
   moderator_muted?: ModeratorMuted;
   participants?: Participants;
   quietness_budget?: QuietnessBudget;
   rolling_global_transcript_2min?: RollingGlobalTranscript2Min;
+  rolling_transcript_30s_embedding?: RollingTranscript30SEmbedding;
   scheduled_end_at?: ScheduledEndAt;
   session_id: SessionId;
   silence_run_sec?: SilenceRunSec;
   started_at: StartedAt;
+  study_prompt?: StudyPrompt;
+  study_prompt_embedding?: StudyPromptEmbedding;
   t: T;
   tick_id: TickId;
 }

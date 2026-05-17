@@ -265,6 +265,19 @@
       "title": "Elapsed Sec",
       "type": "number"
     },
+    "embedding_model_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Model identifier that produced both embeddings on this snapshot. Persisted into state snapshots so replay can refuse a cross-model comparison.",
+      "title": "Embedding Model Name"
+    },
     "is_paused": {
       "default": false,
       "description": "Set by `pause_session`; the tick loop still runs but the moderator is suppressed from speaking.",
@@ -294,6 +307,22 @@
       "description": "Concatenated finalized text from all speakers in the last 2 min, newest last. Used by `topic_drift` and `stalled_thread`.",
       "title": "Rolling Global Transcript 2Min",
       "type": "string"
+    },
+    "rolling_transcript_30s_embedding": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Vector of the last ~30s of group transcript. Refreshed by the state store on each speech-finalization event; lags the raw transcript field by one embed round-trip. None until enough transcript has accumulated to embed.",
+      "title": "Rolling Transcript 30S Embedding"
     },
     "scheduled_end_at": {
       "anyOf": [
@@ -326,6 +355,28 @@
       "format": "date-time",
       "title": "Started At",
       "type": "string"
+    },
+    "study_prompt": {
+      "default": "",
+      "description": "The researcher's framing prompt for this study; embedded once at session load and reused for similarity comparisons.",
+      "title": "Study Prompt",
+      "type": "string"
+    },
+    "study_prompt_embedding": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Vector representation of `study_prompt`. None until the state store has run the embedding call; rules MUST handle the None case (typically: don't fire) so a transient provider outage doesn't fabricate false positives.",
+      "title": "Study Prompt Embedding"
     },
     "t": {
       "description": "Wall-clock for the current tick.",

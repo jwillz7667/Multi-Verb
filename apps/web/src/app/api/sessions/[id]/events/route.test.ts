@@ -40,6 +40,8 @@ const listUtterancesSinceMock =
   vi.fn<(id: string, opts: { afterUtteranceId?: string; limit?: number }) => Promise<unknown[]>>();
 const listStateSnapshotsSinceMock =
   vi.fn<(id: string, opts: { afterSnapshotId?: string; limit?: number }) => Promise<unknown[]>>();
+const listDecisionsSinceMock =
+  vi.fn<(id: string, opts: { afterDecisionId?: string; limit?: number }) => Promise<unknown[]>>();
 const authMock = vi.fn<() => Promise<MockSession | null>>();
 const createSubscriberMock = vi.fn<() => FakeSubscriber>();
 
@@ -53,6 +55,7 @@ vi.mock('@/features/sessions', async () => {
     findSessionById: findSessionByIdMock,
     listUtterancesSince: listUtterancesSinceMock,
     listStateSnapshotsSince: listStateSnapshotsSinceMock,
+    listDecisionsSince: listDecisionsSinceMock,
     parseTranscriptEvent: events.parseTranscriptEvent,
   };
 });
@@ -140,6 +143,7 @@ describe('GET /api/sessions/[id]/events', () => {
     });
     listUtterancesSinceMock.mockResolvedValue([]);
     listStateSnapshotsSinceMock.mockResolvedValue([]);
+    listDecisionsSinceMock.mockResolvedValue([]);
     const fake = buildFakeSubscriber();
     createSubscriberMock.mockReturnValue(fake);
 
@@ -183,6 +187,7 @@ describe('GET /api/sessions/[id]/events', () => {
     });
     listUtterancesSinceMock.mockResolvedValue([]);
     listStateSnapshotsSinceMock.mockResolvedValue([]);
+    listDecisionsSinceMock.mockResolvedValue([]);
     createSubscriberMock.mockReturnValue(buildFakeSubscriber());
 
     const { GET } = await importRoute();
@@ -209,7 +214,7 @@ describe('GET /api/sessions/[id]/events', () => {
     ]);
     void racedRead;
 
-    // The same Last-Event-ID is offered to both repos; each silently
+    // The same Last-Event-ID is offered to all three repos; each silently
     // ignores it if the row doesn't belong to that table/session.
     expect(listUtterancesSinceMock).toHaveBeenCalledWith('sess-2', {
       afterUtteranceId: 'cursor-99',
@@ -217,6 +222,10 @@ describe('GET /api/sessions/[id]/events', () => {
     });
     expect(listStateSnapshotsSinceMock).toHaveBeenCalledWith('sess-2', {
       afterSnapshotId: 'cursor-99',
+      limit: 240,
+    });
+    expect(listDecisionsSinceMock).toHaveBeenCalledWith('sess-2', {
+      afterDecisionId: 'cursor-99',
       limit: 240,
     });
 
@@ -236,6 +245,7 @@ describe('GET /api/sessions/[id]/events', () => {
     });
     listUtterancesSinceMock.mockResolvedValue([]);
     listStateSnapshotsSinceMock.mockResolvedValue([]);
+    listDecisionsSinceMock.mockResolvedValue([]);
     const fake = buildFakeSubscriber();
     createSubscriberMock.mockReturnValue(fake);
 
@@ -301,6 +311,91 @@ describe('GET /api/sessions/[id]/events', () => {
     expect(body).toContain('event: state_snapshot');
     expect(body).toContain('"type":"state_snapshot"');
     expect(body).toContain('44444444-4444-4444-8444-444444444444');
+
+    await reader.cancel();
+  });
+
+  it('routes a published decision envelope as event: decision', async () => {
+    authMock.mockResolvedValue({ user: { email: 'r@example.com' } });
+    findSessionByIdMock.mockResolvedValue({
+      id: 'sess-4',
+      livekitRoomName: 'room-w',
+      status: 'live',
+      scheduledStart: null,
+      actualStart: new Date(),
+      actualEnd: null,
+      createdAt: new Date(),
+    });
+    listUtterancesSinceMock.mockResolvedValue([]);
+    listStateSnapshotsSinceMock.mockResolvedValue([]);
+    listDecisionsSinceMock.mockResolvedValue([]);
+    const fake = buildFakeSubscriber();
+    createSubscriberMock.mockReturnValue(fake);
+
+    const { GET } = await importRoute();
+    const res = await GET(
+      new Request('http://localhost/api/sessions/sess-4/events'),
+      makeContext('sess-4'),
+    );
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // Drain the ready frame so subsequent reads see the routed message.
+    await reader.read();
+
+    // Shadow-mode decision: the resolver picked stay_silent because the
+    // quietness budget filtered the would-be unheard_participant trigger.
+    const decisionEnvelope = {
+      type: 'decision',
+      id: '66666666-6666-4666-8666-666666666666',
+      session_id: '77777777-7777-4777-8777-777777777777',
+      ts: '2026-05-16T12:35:00.000Z',
+      payload: {
+        decision: {
+          decision_id: '66666666-6666-4666-8666-666666666666',
+          session_id: '77777777-7777-4777-8777-777777777777',
+          tick_id: 12,
+          timestamp: '2026-05-16T12:35:00.000Z',
+          action: 'stay_silent',
+          target_participant_id: null,
+          source: 'auto',
+          triggering_rule: null,
+          researcher_id: null,
+          researcher_hint: null,
+          reason_codes: [],
+          reason_human: '',
+          confidence: 0.0,
+          suppressed_by: ['quietness_budget'],
+          was_executed: false,
+          llm_prompt: null,
+          llm_output: null,
+          tts_audio_url: null,
+          spoken_at: null,
+          cooldown_until: '2026-05-16T12:35:00.000Z',
+        },
+      },
+    };
+    fake.emit('message', 'verbio:events:sess-4', JSON.stringify(decisionEnvelope));
+
+    let body = '';
+    for (let i = 0; i < 6 && !body.includes('event: decision'); i++) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<{ value: undefined; done: true }>((resolve) => {
+          setTimeout(() => {
+            resolve({ value: undefined, done: true });
+          }, 20);
+        }),
+      ]);
+      if (next.value !== undefined) body += decoder.decode(next.value);
+    }
+
+    expect(body).toContain('event: decision');
+    expect(body).toContain('"type":"decision"');
+    expect(body).toContain('66666666-6666-4666-8666-666666666666');
+    expect(body).toContain('"action":"stay_silent"');
+    expect(body).toContain('"suppressed_by":["quietness_budget"]');
 
     await reader.cancel();
   });

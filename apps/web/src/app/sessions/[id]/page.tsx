@@ -18,6 +18,7 @@ import { findSessionById } from '@/features/sessions';
 import { auth } from '@/lib/auth';
 import { clientEnv } from '@/lib/env';
 
+import { DecisionLog } from './decision-log';
 import { LiveTranscript } from './live-transcript';
 import { ParticipantTiles } from './participant-tiles';
 import { SessionLifecycleControls } from './session-controls';
@@ -88,6 +89,7 @@ export default async function SessionDetailPage({
 
         <ParticipantTiles sessionId={session.id} />
         <LiveTranscript sessionId={session.id} />
+        <DecisionLog sessionId={session.id} />
       </div>
     </main>
   );

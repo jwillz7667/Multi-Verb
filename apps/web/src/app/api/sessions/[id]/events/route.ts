@@ -39,11 +39,13 @@
 
 import {
   findSessionById,
+  listDecisionsSince,
   listStateSnapshotsSince,
   listUtterancesSince,
   parseTranscriptEvent,
 } from '@/features/sessions';
 import type {
+  DecisionRow,
   StateSnapshotRow,
   TranscriptEventInput,
   TranscriptEventValidated,
@@ -60,6 +62,10 @@ export const maxDuration = 300;
 const HEARTBEAT_MS = 25_000;
 const UTTERANCE_BACKFILL_LIMIT = 500;
 const SNAPSHOT_BACKFILL_LIMIT = 240; // 2 min @ 2 Hz; matches repo default.
+// Decisions write at the same 2 Hz cadence as snapshots, so the cap
+// matches — 2 minutes of audit history on a reconnect is plenty to
+// repaint the dashboard's decision log before live frames take over.
+const DECISION_BACKFILL_LIMIT = 240;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -183,13 +189,13 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       // confirms the route is wired before any silence.
       safeEnqueue(`event: ready\ndata: ${JSON.stringify({ session_id: sessionId })}\n\n`);
 
-      // 2. Backfill both variants in parallel. The cursor (`lastEventId`)
-      //    might be either an utterance UUID or a snapshot UUID; each
-      //    repo's cross-session check silently drops cursors that don't
-      //    belong to this session, so passing the same id to both is
-      //    safe — at most one repo finds the cursor, the other returns
-      //    from the start.
-      const [utteranceBackfill, snapshotBackfill] = await Promise.all([
+      // 2. Backfill all three variants in parallel. The cursor (`lastEventId`)
+      //    might be a utterance / snapshot / decision UUID; each repo's
+      //    cross-session check silently drops cursors that don't belong
+      //    to this session, so passing the same id to all three is safe —
+      //    at most one repo finds the cursor, the others return from the
+      //    start.
+      const [utteranceBackfill, snapshotBackfill, decisionBackfill] = await Promise.all([
         listUtterancesSince(sessionId, {
           ...(lastEventId !== undefined && { afterUtteranceId: lastEventId }),
           limit: UTTERANCE_BACKFILL_LIMIT,
@@ -198,6 +204,10 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
           ...(lastEventId !== undefined && { afterSnapshotId: lastEventId }),
           limit: SNAPSHOT_BACKFILL_LIMIT,
         }),
+        listDecisionsSince(sessionId, {
+          ...(lastEventId !== undefined && { afterDecisionId: lastEventId }),
+          limit: DECISION_BACKFILL_LIMIT,
+        }),
       ]);
 
       for (const row of utteranceBackfill) {
@@ -205,6 +215,10 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       }
       for (const row of snapshotBackfill) {
         const event = snapshotRowToEvent(row);
+        if (event !== null) writeEvent(event);
+      }
+      for (const row of decisionBackfill) {
+        const event = decisionRowToEvent(row);
         if (event !== null) writeEvent(event);
       }
 
@@ -292,6 +306,51 @@ function snapshotRowToEvent(row: StateSnapshotRow): TranscriptEventValidated | n
     payload: {
       snapshot_id: row.id,
       state: row.state,
+    },
+  });
+}
+
+/**
+ * Shape a backfilled `decisions` row as a transcript envelope.
+ *
+ * Mirrors `verbio_engine.realtime.events.decision_event` — the wire
+ * shape that the live engine-side publish path also produces — so the
+ * dashboard's Zod schema sees identical frames whether the source is
+ * Redis pub/sub (live) or Postgres (backfill).
+ *
+ * Validation is the same parseTranscriptEvent gate; a corrupt row
+ * (impossible if the migration's CHECK constraints hold, but defended
+ * anyway) is dropped rather than poisoning the stream.
+ */
+function decisionRowToEvent(row: DecisionRow): TranscriptEventValidated | null {
+  return parseTranscriptEvent({
+    type: 'decision',
+    id: row.id,
+    session_id: row.sessionId,
+    ts: row.ts.toISOString(),
+    payload: {
+      decision: {
+        decision_id: row.id,
+        session_id: row.sessionId,
+        tick_id: Number(row.tickId),
+        timestamp: row.ts.toISOString(),
+        action: row.action,
+        target_participant_id: row.targetParticipantId,
+        source: row.source,
+        triggering_rule: row.triggeringRule,
+        researcher_id: row.researcherId,
+        researcher_hint: row.researcherHint,
+        reason_codes: row.reasonCodes,
+        reason_human: row.reasonHuman,
+        confidence: row.confidence,
+        suppressed_by: row.suppressedBy,
+        was_executed: row.wasExecuted,
+        llm_prompt: row.llmPrompt,
+        llm_output: row.llmOutput,
+        tts_audio_url: row.ttsAudioUrl,
+        spoken_at: row.spokenAt?.toISOString() ?? null,
+        cooldown_until: row.cooldownUntil.toISOString(),
+      },
     },
   });
 }
