@@ -29,7 +29,9 @@
  */
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+
+import { ReplayTimeline } from './replay-timeline';
 
 import type { ReplayBootstrap } from './replay-types';
 
@@ -38,7 +40,7 @@ interface Props {
 }
 
 export function ReplayShell({ bootstrap }: Props): React.ReactElement {
-  const { session, participants, decisions, flags } = bootstrap;
+  const { session, participants, decisions, flags, initial_utterances } = bootstrap;
 
   // The initial scrubber position is `actual_start` if present —
   // otherwise we fall back to `created_at` so the page still renders
@@ -47,6 +49,13 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
   const initialTs = session.actual_start ?? session.created_at;
   const [currentTs, setCurrentTs] = useState<string>(initialTs);
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
+
+  const handleSeek = useCallback((ts: string): void => {
+    setCurrentTs(ts);
+  }, []);
+  const handleSelectDecision = useCallback((decisionId: string): void => {
+    setSelectedDecisionId(decisionId);
+  }, []);
 
   const durationLabel = useMemo(
     () => formatDurationLabel(session.actual_start, session.actual_end),
@@ -96,23 +105,34 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
         </header>
 
         {/*
-          L5 — timeline component. The placeholder reserves vertical
-          space so the page layout doesn't shift when the real timeline
-          lands. The `data-testid` lets future component tests target
-          the slot without scraping prose.
+          L5 — timeline. Three swimlanes (speech bands, decisions,
+          flags) over a shared time axis. Click anywhere on the axis
+          seeks the scrubber; click a decision marker also opens it in
+          the detail pane.
         */}
         <section
-          className="border-border-default bg-surface-primary flex h-40 flex-col justify-center rounded-lg border px-6"
+          className="border-border-default bg-surface-primary flex flex-col gap-2 rounded-lg border px-6 py-4"
           data-testid="replay-timeline-slot"
         >
-          <p className="text-text-secondary text-sm">
-            Timeline · {participants.length} participant lane{participants.length === 1 ? '' : 's'},{' '}
-            {decisions.length} decision marker{decisions.length === 1 ? '' : 's'}, {flags.length}{' '}
-            flag{flags.length === 1 ? '' : 's'}
-          </p>
-          <p className="text-text-tertiary mt-2 font-mono text-xs">
-            scrubber @ {currentTs} — interactive timeline ships in P6 L5
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-text-secondary text-xs">
+              {participants.length} participant lane{participants.length === 1 ? '' : 's'} ·{' '}
+              {decisions.length} decision{decisions.length === 1 ? '' : 's'} · {flags.length} flag
+              {flags.length === 1 ? '' : 's'}
+            </p>
+            <p className="text-text-tertiary font-mono text-xs">@ {currentTs}</p>
+          </div>
+          <ReplayTimeline
+            session={session}
+            participants={participants}
+            utterances={initial_utterances}
+            decisions={decisions}
+            flags={flags}
+            currentTs={currentTs}
+            selectedDecisionId={selectedDecisionId}
+            onSeek={handleSeek}
+            onSelectDecision={handleSelectDecision}
+          />
         </section>
 
         {/*
@@ -202,21 +222,9 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
             ) : (
               <p className="text-text-tertiary font-mono text-xs">selected: {selectedDecisionId}</p>
             )}
-            <div className="mt-4">
-              <button
-                type="button"
-                className="border-border-default text-text-tertiary cursor-not-allowed rounded-md border px-3 py-1 text-xs"
-                disabled
-                onClick={(): void => {
-                  // L8 will replace this with a real selector; keeping
-                  // setSelectedDecisionId referenced here keeps the
-                  // dispatcher live in lint-strict mode.
-                  setSelectedDecisionId(decisions[0]?.id ?? null);
-                }}
-              >
-                Detail wiring ships in P6 L8
-              </button>
-            </div>
+            <p className="text-text-tertiary mt-4 text-xs">
+              Full rule-evaluation breakdown + LLM prompt/output ship in P6 L8.
+            </p>
           </section>
         </div>
 
@@ -250,9 +258,6 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
           type="button"
           className="text-text-tertiary self-end text-xs underline"
           onClick={(): void => {
-            // Wire setCurrentTs back so the linter sees the setter used —
-            // L5 will replace this with a real scrubber. Resets the
-            // scrubber to the start of the session.
             setCurrentTs(initialTs);
           }}
         >
