@@ -771,6 +771,46 @@ export async function listSnapshotsByRange(
   }));
 }
 
+/**
+ * Find the freshest snapshot at or before a given timestamp.
+ *
+ * Used by the replay state panel when the scrubber moves outside the
+ * 5-minute bootstrap window — instead of round-tripping a wide range
+ * query just to throw most of it away, we fetch one row that backs
+ * exactly what the panel renders.
+ *
+ * Returns null if the session has no snapshot ≤ `ts` (i.e., the
+ * scrubber landed before the first tick). The panel renders the
+ * "no data yet" affordance in that case.
+ *
+ * Indexed by `ix_state_snapshots_session_id_ts_desc` for O(log n)
+ * lookup — even a 60-min session is one B-tree descent.
+ */
+export async function findSnapshotAtOrBefore(
+  sessionId: string,
+  ts: Date,
+): Promise<StateSnapshotRow | null> {
+  const row = await db.stateSnapshot.findFirst({
+    where: { sessionId, ts: { lte: ts } },
+    orderBy: [{ ts: 'desc' }, { id: 'desc' }],
+    select: {
+      id: true,
+      sessionId: true,
+      tickId: true,
+      ts: true,
+      state: true,
+    },
+  });
+  if (row === null) return null;
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    state: row.state,
+  };
+}
+
 export interface SessionFlagRow {
   id: string;
   sessionId: string;

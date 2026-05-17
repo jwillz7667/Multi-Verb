@@ -18,7 +18,7 @@
  */
 
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ReplayShell } from './replay-shell';
 
@@ -64,6 +64,22 @@ function makeBootstrap(overrides: Partial<ReplayBootstrap> = {}): ReplayBootstra
 }
 
 describe('<ReplayShell />', () => {
+  beforeEach(() => {
+    // The shell mounts <ReplayAudioPlayer /> and <ReplayStateSnapshot />,
+    // both of which dispatch a fetch on mount (signed-URL / snapshot-at).
+    // These smoke tests assert on layout only — a never-resolving fetch
+    // keeps the loading state stable and avoids React act() warnings
+    // from late state updates after the synchronous render returns.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('renders the "Replay mode" pin (visually distinct from live)', () => {
     render(<ReplayShell bootstrap={makeBootstrap()} />);
 

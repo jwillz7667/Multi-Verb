@@ -32,6 +32,7 @@ import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ReplayAudioPlayer } from './replay-audio-player';
+import { ReplayStateSnapshot } from './replay-state-snapshot';
 import { ReplayTimeline } from './replay-timeline';
 
 import type { ReplayBootstrap } from './replay-types';
@@ -182,24 +183,17 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/*
-            L7 — state snapshot panel. Shows the SessionState frozen at
-            the scrubber position. Selecting a decision in the right
-            pane drives the scrubber, which re-renders this pane.
+            L7 — state snapshot panel. Renders the SessionState frozen
+            at the scrubber position. The panel reads from the
+            bootstrap window (5 min) and fetches on-demand from
+            /snapshots/at when the scrubber moves outside it.
           */}
-          <section
-            className="border-border-default bg-surface-primary flex min-h-[20rem] flex-col gap-2 rounded-lg border p-6"
-            data-testid="replay-state-slot"
-          >
-            <h2 className="text-text-primary text-sm font-medium uppercase tracking-wide">
-              State snapshot
-            </h2>
-            <p className="text-text-tertiary font-mono text-xs">@ {currentTs}</p>
-            <p className="text-text-secondary mt-4 text-sm">
-              {bootstrap.initial_snapshots.length} initial snapshot
-              {bootstrap.initial_snapshots.length === 1 ? '' : 's'} loaded; pane wiring ships in P6
-              L7.
-            </p>
-          </section>
+          <ReplayStateSnapshot
+            sessionId={session.id}
+            participants={participants}
+            initialSnapshots={bootstrap.initial_snapshots}
+            currentTs={currentTs}
+          />
 
           {/*
             L8 — decision detail panel. Renders the selected decision's

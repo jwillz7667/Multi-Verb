@@ -19,6 +19,7 @@ export {
   findDecisionSessionId,
   findSessionById,
   findSessionForReplay,
+  findSnapshotAtOrBefore,
   listDecisionsByRange,
   listDecisionsSince,
   listParticipantsForSession,
