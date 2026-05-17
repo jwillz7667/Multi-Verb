@@ -729,6 +729,129 @@ export async function listDecisionsByRange(
 }
 
 /**
+ * Stream every final utterance for a session into an async iterator.
+ *
+ * Exports (transcript .txt / .vtt — and the L11 decision CSV builds
+ * on the same pattern) need every row, not the bootstrap window the
+ * replay UI loads. Pulling 10k+ rows in a single SELECT is fine
+ * latency-wise but blows the Vercel function memory envelope on a
+ * dense 90-minute session. Cursor pagination over `(start_ts, id)`
+ * keeps memory bounded to one chunk at a time.
+ *
+ * Returns a `null`-on-exhaustion async iterator so callers can
+ * `for await (const chunk of …)` and pipe directly into a streaming
+ * writer.
+ */
+export async function* iterateAllUtterancesForSession(
+  sessionId: string,
+  chunkSize = 2_000,
+): AsyncGenerator<UtteranceWithSpeakerRow[], void, void> {
+  let cursorStartTs: Date | undefined;
+  let cursorId: string | undefined;
+  let hasMore = true;
+  while (hasMore) {
+    const rows = await db.utterance.findMany({
+      where: {
+        sessionId,
+        isFinal: true,
+        ...(cursorStartTs !== undefined && cursorId !== undefined
+          ? {
+              OR: [
+                { startTs: { gt: cursorStartTs } },
+                { startTs: cursorStartTs, id: { gt: cursorId } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ startTs: 'asc' }, { id: 'asc' }],
+      take: chunkSize,
+      select: {
+        id: true,
+        sessionId: true,
+        participantId: true,
+        text: true,
+        isFinal: true,
+        confidence: true,
+        startTs: true,
+        endTs: true,
+        participant: {
+          select: {
+            livekitIdentity: true,
+            displayName: true,
+          },
+        },
+      },
+    });
+    if (rows.length === 0) return;
+    yield rows.map((row) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      participantId: row.participantId,
+      participantIdentity: row.participant.livekitIdentity,
+      participantDisplayName: row.participant.displayName,
+      text: row.text,
+      isFinal: row.isFinal,
+      confidence: row.confidence,
+      startTs: row.startTs,
+      endTs: row.endTs,
+    }));
+    const last = rows[rows.length - 1];
+    if (last === undefined) return;
+    cursorStartTs = last.startTs;
+    cursorId = last.id;
+    // A short page means the page tail is the table tail — no need to
+    // round-trip again just to discover an empty result.
+    hasMore = rows.length === chunkSize;
+  }
+}
+
+/**
+ * Fetch only decisions that actually went through the mouth — i.e.,
+ * the moderator's spoken turns. The brief persists every tick (≈ 7200
+ * rows per hour at 2 Hz) but the transcript export only wants the few
+ * dozen rows that produced audio. Filtering at the DB level skips a
+ * giant read for a tiny result set.
+ *
+ * Ordered by `(spoken_at, id)` where present, falling back to `ts`
+ * for rows that lack a `spoken_at` (transitional state at the moment
+ * of execution). The export merges these with utterances, sorting by
+ * the line's start time, so the table-level ordering here is mostly a
+ * cosmetic safety net for deterministic output.
+ */
+export async function listExecutedModeratorTurns(sessionId: string): Promise<DecisionRow[]> {
+  const rows = await db.decision.findMany({
+    where: {
+      sessionId,
+      wasExecuted: true,
+      NOT: { llmOutput: null },
+    },
+    orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    tickId: row.tickId,
+    ts: row.ts,
+    action: row.action,
+    targetParticipantId: row.targetParticipantId,
+    source: row.source,
+    triggeringRule: row.triggeringRule,
+    researcherId: row.researcherId,
+    researcherHint: row.researcherHint,
+    reasonCodes: row.reasonCodes,
+    reasonHuman: row.reasonHuman,
+    confidence: row.confidence,
+    suppressedBy: row.suppressedBy,
+    wasExecuted: row.wasExecuted,
+    llmPrompt: row.llmPrompt as Record<string, unknown> | null,
+    llmOutput: row.llmOutput,
+    ttsAudioUrl: row.ttsAudioUrl,
+    spokenAt: row.spokenAt,
+    cooldownUntil: row.cooldownUntil,
+  }));
+}
+
+/**
  * Range-fetch state snapshots by `ts ∈ [fromTs, toTs]`.
  *
  * Used by the replay state snapshot panel. Snapshots write at 2 Hz

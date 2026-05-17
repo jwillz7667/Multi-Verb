@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ReplayAudioPlayer } from './replay-audio-player';
 import { ReplayDecisionDetail } from './replay-decision-detail';
+import { ReplayExports } from './replay-exports';
 import { ReplayFilters, EMPTY_FILTERS, applyDecisionFilters } from './replay-filters';
 import { ReplayStateSnapshot } from './replay-state-snapshot';
 import { ReplayTimeline } from './replay-timeline';
@@ -233,30 +234,12 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
         </div>
 
         {/*
-          L10–L13 — exports. Disabled placeholders for transcript,
-          decision log, snapshots, audio clips. The layout reserves a
-          row so the page is the same height when the export buttons
-          land — no flicker when the researcher hits the page.
+          L10 — transcript exports (.txt + .vtt) wired to
+          /api/sessions/[id]/exports/transcript. L11–L13 disabled
+          placeholders still render at the same physical footprint so
+          the page doesn't reflow when those layers land.
         */}
-        <section
-          className="border-border-default bg-surface-primary flex flex-wrap items-center gap-3 rounded-lg border px-6 py-4"
-          data-testid="replay-exports-slot"
-        >
-          <span className="text-text-primary text-sm font-medium">Export</span>
-          {(['Transcript', 'Decision log', 'State snapshots', 'Flagged clips'] as const).map(
-            (label) => (
-              <button
-                key={label}
-                type="button"
-                className="border-border-default text-text-tertiary cursor-not-allowed rounded-md border px-3 py-1 text-xs"
-                disabled
-              >
-                {label}
-              </button>
-            ),
-          )}
-          <span className="text-text-tertiary ml-auto text-xs">P6 L10–L13</span>
-        </section>
+        <ReplayExports sessionId={session.id} />
 
         <button
           type="button"
