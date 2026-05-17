@@ -1,21 +1,27 @@
-"""Decision tick-listener — resolver → persist → publish → dispatch (P3 L10 / P4 L8).
+"""Decision tick-listener — resolver → persist → publish → dispatch (P3 L10 / P4 L8 / P5 L2).
 
 Plugged into the tick loop alongside `PersistAndPublishListener`. Each
 tick this listener:
 
-  1. Runs `verbio_engine.rules.resolve` against the current `SessionState`
+  1. (P5 L2) Drains any pending researcher commands from the
+     `CommandBus` and persists each as a `researcher_actions` row.
+     Commands themselves are not yet translated into decisions in this
+     layer — P5 L3 wires `commands_to_decision` to override the
+     resolver output. For L2 the bus is the transport + audit-trail
+     boundary; the rules path still drives the moderator.
+  2. Runs `verbio_engine.rules.resolve` against the current `SessionState`
      and the in-process cooldown map.
-  2. Opens one short transaction and writes the parent `decisions` row
+  3. Opens one short transaction and writes the parent `decisions` row
      followed by the per-rule `rule_evaluations` rows. The two writes
      commit together so a snapshot can never reference an orphaned
      evaluations row (and vice-versa).
-  3. Publishes the `decision` SSE envelope on Redis. Persist-before-
+  4. Publishes the `decision` SSE envelope on Redis. Persist-before-
      publish is the brief's §6 invariant (audit truth first, wire
      second); failures of the Redis side are swallowed by the
      publisher itself.
-  4. Updates the cooldown map for the rule that won, so the next tick's
+  5. Updates the cooldown map for the rule that won, so the next tick's
      resolver call sees the fresh `last_won_at`.
-  5. (P4 L8) When an `ExecutionDispatcher` is wired AND the decision is
+  6. (P4 L8) When an `ExecutionDispatcher` is wired AND the decision is
      a non-silent auto decision, hands the decision off to the
      dispatcher — the actual mouth/TTS/publisher run happens in a
      background task so the tick loop never blocks (brief §6 step 6).
@@ -49,6 +55,8 @@ from verbio_engine.logging import get_logger
 from verbio_engine.persistence import (
     DecisionInsert,
     DecisionRepo,
+    ResearcherActionInsert,
+    ResearcherActionRepo,
     RuleEvaluationInsert,
     RuleEvaluationRepo,
 )
@@ -60,7 +68,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from verbio_engine.commands import CommandBus
     from verbio_engine.decisions.dispatcher import ExecutionDispatcher
+    from verbio_engine.domain.command import ResearcherCommand
     from verbio_engine.domain.session_state import SessionState
     from verbio_engine.realtime import EventPublisher
     from verbio_engine.rules import RulesRegistry
@@ -81,9 +91,10 @@ class IdentityResolver(Protocol):
 
 
 class DecisionTickListener:
-    """`SnapshotListener` impl: resolve → persist decision + evaluations → publish."""
+    """`SnapshotListener` impl: drain commands → resolve → persist + publish."""
 
     __slots__ = (
+        "_command_bus",
         "_cooldowns",
         "_executor_dispatcher",
         "_identity_resolver",
@@ -99,6 +110,7 @@ class DecisionTickListener:
         publisher: EventPublisher,
         rules: RulesRegistry,
         identity_resolver: IdentityResolver,
+        command_bus: CommandBus | None = None,
         executor_dispatcher: ExecutionDispatcher | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -109,12 +121,24 @@ class DecisionTickListener:
         # the rule last *won* on. The resolver consumes this read-only;
         # we mutate it after the winner is known.
         self._cooldowns: dict[str, datetime] = {}
+        # P5 L2: optional command bus. When wired, drained at the top of
+        # each tick and persisted to `researcher_actions`. None = run the
+        # auto path only (shadow-mode for researcher commands).
+        self._command_bus = command_bus
         # Optional execution path. When wired, non-silent auto decisions
         # are handed to the dispatcher after persist+publish; the tick
         # loop continues immediately (brief §6 step 6).
         self._executor_dispatcher = executor_dispatcher
 
     async def __call__(self, state: SessionState) -> None:
+        # P5 L2: drain researcher commands before evaluating rules so
+        # the audit row exists even if a later step in this tick fails.
+        # In L2 the commands don't yet steer the moderator — that's L3.
+        if self._command_bus is not None:
+            commands = await self._command_bus.drain(state.session_id)
+            if commands:
+                await self._persist_commands(commands)
+
         output = resolve(
             state=state,
             t=state.t,
@@ -209,6 +233,69 @@ class DecisionTickListener:
                 identity=identity,
             )
         return pid
+
+    async def _persist_commands(self, commands: list[ResearcherCommand]) -> None:
+        """Write each drained command to `researcher_actions`.
+
+        One transaction for the whole batch — a batch is typically 0-3
+        commands so the open-tx duration is negligible. The repo is
+        idempotent on `command_id`, so a re-drain after restart is a
+        safe no-op rather than producing duplicate audit rows.
+
+        Malformed `researcher_id` (not a UUID) gets logged and skipped;
+        the bus's typed validation should have already caught this, so
+        hitting the warning branch indicates the wire shape evolved.
+
+        Persistence failures are logged but not re-raised — the moderator
+        must keep running even if Postgres has hiccuped on the audit
+        write. A follow-up tick will re-drain and the idempotency check
+        on the next attempt will avoid a duplicate row when Postgres
+        recovers.
+        """
+        records: list[ResearcherActionInsert] = []
+        for cmd in commands:
+            try:
+                researcher_uuid = uuid.UUID(cmd.researcher_id)
+            except ValueError:
+                # The bus's typed validation should have caught this;
+                # hitting this branch means the wire shape evolved. Skip
+                # the audit row rather than crash the tick — researchers
+                # would rather have a missing audit entry than a stuck
+                # moderator.
+                log.warning(
+                    "commands.invalid_researcher_id",
+                    session_id=str(cmd.session_id),
+                    command_id=str(cmd.command_id),
+                    researcher_id=cmd.researcher_id,
+                )
+                continue
+            records.append(
+                ResearcherActionInsert(
+                    command_id=cmd.command_id,
+                    session_id=cmd.session_id,
+                    researcher_id=researcher_uuid,
+                    ts=cmd.issued_at,
+                    command_type=cmd.command_type,
+                    # `payload` is a `dict[str, Any]` on the wire; copy
+                    # so the audit row is decoupled from the producer's
+                    # in-memory object.
+                    payload=dict(cmd.payload) if cmd.payload else None,
+                )
+            )
+        if not records:
+            return
+
+        try:
+            async with self._session_factory() as db, db.begin():
+                repo = ResearcherActionRepo(db)
+                for record in records:
+                    await repo.insert(record)
+        except Exception as exc:
+            log.exception(
+                "commands.persist_failed",
+                count=len(records),
+                error=str(exc),
+            )
 
 
 def _uuid_or_none(value: str | None) -> uuid.UUID | None:

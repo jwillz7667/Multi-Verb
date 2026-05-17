@@ -13,6 +13,8 @@ export {
   SessionNotFoundError,
   startSession,
 } from './service';
+export { publishResearcherCommand, PublishCommandInputSchema } from './commands';
+export type { PublishCommandInput } from './commands';
 export {
   findDecisionSessionId,
   findSessionById,

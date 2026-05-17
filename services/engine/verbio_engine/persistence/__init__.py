@@ -30,6 +30,8 @@ Public surface:
   - `DecisionInsert`        : input record for decision insert
   - `RuleEvaluationRepo`    : write API for rule evaluations (P3 L9)
   - `RuleEvaluationInsert`  : input record for rule-evaluation insert
+  - `ResearcherActionRepo`  : write API for researcher actions (P5 L2)
+  - `ResearcherActionInsert`: input record for researcher-action insert
 
 Anything outside this barrel is internal — consumers depend only on
 the public surface so the implementation can move without ripples.
@@ -60,6 +62,10 @@ from verbio_engine.persistence.repositories.participants import (
     ParticipantJoin,
     ParticipantRepo,
 )
+from verbio_engine.persistence.repositories.researcher_actions import (
+    ResearcherActionInsert,
+    ResearcherActionRepo,
+)
 from verbio_engine.persistence.repositories.rule_evaluations import (
     RuleEvaluationInsert,
     RuleEvaluationRepo,
@@ -87,6 +93,8 @@ __all__ = [
     "ParticipantJoin",
     "ParticipantRepo",
     "ResearcherAction",
+    "ResearcherActionInsert",
+    "ResearcherActionRepo",
     "RuleEvaluation",
     "RuleEvaluationInsert",
     "RuleEvaluationRepo",

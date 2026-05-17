@@ -71,3 +71,24 @@ export function createSubscriber(): Redis {
 export function eventsChannel(sessionId: string): string {
   return `verbio:events:${sessionId}`;
 }
+
+/**
+ * Canonical Redis Stream key for one session's command bus.
+ *
+ * Mirrors the engine's `verbio_engine.commands.commands_stream_key`.
+ * Drift between the two sides would silently strand commands.
+ */
+export function commandsStreamKey(sessionId: string): string {
+  return `verbio:commands:${sessionId}`;
+}
+
+/**
+ * Producer-side cap on the per-session command stream length.
+ *
+ * The engine drains from cursor `"0"` after a worker restart, so an
+ * unconsumed stream stays bounded if the engine is offline. `~ 1000` is
+ * generous for a typical 60-min session (a researcher firing one
+ * command every 3-4 seconds = ~1000 entries) and matches the
+ * engine-side documentation in `commands/bus.py`.
+ */
+export const COMMAND_STREAM_MAXLEN = 1000;

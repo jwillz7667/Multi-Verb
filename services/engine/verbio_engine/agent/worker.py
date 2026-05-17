@@ -29,6 +29,7 @@ from verbio_engine.agent.runtime import (
     UnknownSessionError,
 )
 from verbio_engine.agent.transcribe import TrackTranscriber
+from verbio_engine.commands import CommandBus, NullCommandBus, RedisCommandStreamBus
 from verbio_engine.config import load_settings
 from verbio_engine.logging import configure_logging, get_logger
 from verbio_engine.persistence import create_engine, create_session_factory
@@ -95,6 +96,17 @@ async def _entrypoint_with_runtime(
         else NullEventPublisher()
     )
 
+    # P5 L2: Redis Streams command bus. Same `REDIS_URL` as the SSE
+    # publisher — single Redis deploy fans out both directions. When
+    # unconfigured, the engine still runs in shadow-mode for researcher
+    # commands (no drains, no audit rows) while the rules path keeps
+    # operating normally.
+    command_bus: CommandBus = (
+        RedisCommandStreamBus(settings.redis_url.get_secret_value())
+        if settings.redis_url is not None
+        else NullCommandBus()
+    )
+
     room: rtc.Room = ctx.room  # type: ignore[attr-defined]
     # `rules_registry_factory` opts the runtime into the per-session
     # registry build path (Phase 3 L11). The factory consumes the
@@ -107,6 +119,7 @@ async def _entrypoint_with_runtime(
         room_name=room.name,
         publisher=publisher,
         rules_registry_factory=build_v1_registry,
+        command_bus=command_bus,
     )
 
     # Hold strong references to in-flight tasks so they don't get
@@ -169,6 +182,7 @@ async def _entrypoint_with_runtime(
         await _safe(runtime.stop_tick_loop())
         await _safe(runtime.on_room_disconnected())
         await _safe(publisher.aclose())
+        await _safe(command_bus.aclose())
         await engine.dispose()
 
     ctx.add_shutdown_callback(_shutdown)  # type: ignore[attr-defined]

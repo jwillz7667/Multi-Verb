@@ -10,25 +10,12 @@ import 'server-only';
 
 import { dispatchAgent, mintParticipantToken } from '@/lib/livekit-server';
 
+import { SessionAlreadyEndedError, SessionNotFoundError } from './errors';
 import { createSession, findSessionById } from './repo';
 
 import type { CreateSessionInput, MintTokenInput } from './types';
 
-export class SessionNotFoundError extends Error {
-  readonly code = 'session_not_found';
-  constructor(public readonly sessionId: string) {
-    super(`Session ${sessionId} not found`);
-    this.name = 'SessionNotFoundError';
-  }
-}
-
-export class SessionAlreadyEndedError extends Error {
-  readonly code = 'session_already_ended';
-  constructor(public readonly sessionId: string) {
-    super(`Session ${sessionId} has already ended`);
-    this.name = 'SessionAlreadyEndedError';
-  }
-}
+export { SessionAlreadyEndedError, SessionNotFoundError } from './errors';
 
 /**
  * Create a session row. Engine dispatch happens lazily on first join

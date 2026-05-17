@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from verbio_engine.commands import CommandBus
     from verbio_engine.domain.session_state import SessionState
     from verbio_engine.embeddings import EmbeddingProvider
     from verbio_engine.persistence import Participant, Session, UtteranceInsert
@@ -149,6 +150,7 @@ class SessionRuntime:
         rules_registry: RulesRegistry | None = None,
         rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = None,
         executor_dispatcher: ExecutionDispatcher | None = None,
+        command_bus: CommandBus | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
@@ -174,6 +176,12 @@ class SessionRuntime:
         # has joined the moderator track. Leaving it None keeps the
         # session in shadow mode — decisions persist but no audio plays.
         self._executor_dispatcher: ExecutionDispatcher | None = executor_dispatcher
+        # P5 L2: optional Redis command bus. When wired the
+        # `DecisionTickListener` drains it at the top of every tick and
+        # persists each command to `researcher_actions`. Left None for
+        # tests and for shadow-mode environments where the web service
+        # isn't yet sending researcher commands.
+        self._command_bus: CommandBus | None = command_bus
         # Optional embedding pipeline (Phase 3 L7). When `provider` is
         # None the runtime simply doesn't embed anything — topic_drift
         # will read `None` for both vectors and stay silent. The
@@ -528,6 +536,7 @@ class SessionRuntime:
                 publisher=self._publisher,
                 rules=self._rules_registry,
                 identity_resolver=self._identity_to_db_uuid,
+                command_bus=self._command_bus,
                 executor_dispatcher=self._executor_dispatcher,
             )
         listener = _compose_tick_listeners(snapshot_listener, decision_listener)

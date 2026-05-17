@@ -26,7 +26,8 @@ import pytest
 
 from verbio_engine.decisions import DecisionTickListener
 from verbio_engine.domain import ParticipantState, QuietnessBudget, SessionState
-from verbio_engine.persistence import Decision, RuleEvaluation
+from verbio_engine.domain.command import ResearcherCommand
+from verbio_engine.persistence import Decision, ResearcherAction, RuleEvaluation
 from verbio_engine.realtime import DecisionEventEnvelope
 from verbio_engine.rules import RulePredicateResult, RulesRegistry
 
@@ -45,8 +46,20 @@ if TYPE_CHECKING:
 class _RecordingAction:
     """One observable event during a listener invocation."""
 
-    kind: str  # "decision_add" | "evals_add" | "flush" | "publish"
+    kind: str  # "decision_add" | "researcher_action_add" | "evals_add" | "flush" | "publish"
     payload: object
+
+
+class _FakeResult:
+    """Stand-in for the SQLAlchemy `Result` returned by AsyncSession.execute.
+
+    The researcher_actions repo only calls `.scalar_one_or_none()` to decide
+    whether the command_id is already on file. Returning `None` means "no
+    row exists yet" so the repo will then INSERT.
+    """
+
+    def scalar_one_or_none(self) -> object | None:
+        return None
 
 
 @dataclass(slots=True)
@@ -57,15 +70,20 @@ class _FakeAsyncSession:
     fail_on_decision_flush: bool = False
     _exited: bool = False
 
-    def add(self, instance: Decision) -> None:
-        self.actions.append(_RecordingAction("decision_add", instance))
+    def add(self, instance: object) -> None:
+        if isinstance(instance, Decision):
+            self.actions.append(_RecordingAction("decision_add", instance))
+        elif isinstance(instance, ResearcherAction):
+            self.actions.append(_RecordingAction("researcher_action_add", instance))
+        else:
+            self.actions.append(_RecordingAction("other_add", instance))
 
     def add_all(self, instances: list[RuleEvaluation]) -> None:
         # Record a *copy* of the input list so subsequent mutations by
         # the SUT don't retroactively edit the assertion view.
         self.actions.append(_RecordingAction("evals_add", list(instances)))
 
-    async def flush(self, instances: list[Decision | RuleEvaluation] | None = None) -> None:
+    async def flush(self, instances: list[object] | None = None) -> None:
         if (
             self.fail_on_decision_flush
             and instances is not None
@@ -74,6 +92,12 @@ class _FakeAsyncSession:
             msg = "simulated DB outage"
             raise RuntimeError(msg)
         self.actions.append(_RecordingAction("flush", instances or []))
+
+    async def execute(self, _stmt: object) -> _FakeResult:
+        # The researcher_actions repo issues a SELECT to test idempotency
+        # before INSERT; every command we feed in these tests is fresh so
+        # the fake reports "no existing row".
+        return _FakeResult()
 
     def begin(self) -> object:
         outer = self
@@ -199,12 +223,53 @@ class _RecordingDispatcher:
         self.dispatched.append((decision, state))
 
 
+@dataclass(slots=True)
+class _FakeCommandBus:
+    """Stand-in for `CommandBus` — yields a scripted batch per session per drain.
+
+    `queues[session_id]` is a list of batches; each `drain()` call pops the
+    front batch and returns it. When the queue is empty the bus reports
+    "no commands" so a multi-tick test exhausts gracefully.
+    """
+
+    queues: dict[uuid.UUID, list[list[ResearcherCommand]]] = field(default_factory=dict)
+    drain_calls: list[uuid.UUID] = field(default_factory=list)
+
+    async def drain(self, session_id: uuid.UUID) -> list[ResearcherCommand]:
+        self.drain_calls.append(session_id)
+        queue = self.queues.get(session_id)
+        if not queue:
+            return []
+        return queue.pop(0)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _researcher_command(
+    *,
+    session_id: uuid.UUID,
+    command_type: str = "set_quietness_budget",
+    researcher_id: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> ResearcherCommand:
+    return ResearcherCommand(
+        command_id=uuid.uuid4(),
+        session_id=session_id,
+        researcher_id=researcher_id or str(uuid.uuid4()),
+        issued_at=datetime.now(UTC),
+        command_type=command_type,  # type: ignore[arg-type]
+        payload=payload if payload is not None else {"max_utterances_per_10min": 2},
+    )
+
+
 def _build(
     *,
     rules: RulesRegistry,
     identity_resolver: object = None,
     fail_on_decision_flush: bool = False,
     executor_dispatcher: _RecordingDispatcher | None = None,
+    command_bus: _FakeCommandBus | None = None,
 ) -> tuple[DecisionTickListener, list[_RecordingAction], _FakeSessionFactory, _FakePublisher]:
     actions: list[_RecordingAction] = []
     factory = _FakeSessionFactory(actions=actions, fail_on_decision_flush=fail_on_decision_flush)
@@ -212,9 +277,10 @@ def _build(
     resolver = identity_resolver or (lambda _identity: None)
     listener = DecisionTickListener(
         session_factory=factory,  # type: ignore[arg-type]
-        publisher=publisher,  # type: ignore[arg-type]
+        publisher=publisher,
         rules=rules,
         identity_resolver=resolver,  # type: ignore[arg-type]
+        command_bus=command_bus,
         executor_dispatcher=executor_dispatcher,  # type: ignore[arg-type]
     )
     return listener, actions, factory, publisher
@@ -318,8 +384,8 @@ async def test_persist_failure_propagates_and_no_publish_or_cooldown_update() ->
     new_publisher = _FakePublisher(actions=fresh_actions)
     # Re-use the same listener instance to prove its _cooldowns map wasn't
     # mutated by the failed tick.
-    listener._session_factory = new_factory  # type: ignore[attr-defined,assignment]
-    listener._publisher = new_publisher  # type: ignore[attr-defined,assignment]
+    listener._session_factory = new_factory  # type: ignore[assignment]
+    listener._publisher = new_publisher
 
     await listener(_state(tick_id=1, t=TICK_ZERO + timedelta(seconds=10)))
     second = next(a.payload for a in fresh_actions if a.kind == "decision_add")
@@ -503,3 +569,122 @@ class TestDispatcherGating:
             await listener(_state(tick_id=0))
 
         assert dispatcher.dispatched == []
+
+
+# ---------------------------------------------------------------------------
+# Command drain (P5 L2)
+# ---------------------------------------------------------------------------
+
+
+class TestCommandDrain:
+    """Researcher commands drain at the top of each tick and persist to
+    `researcher_actions` regardless of whether the rules path fires.
+
+    L2 still keeps the rules path authoritative — translation of commands
+    into a `ModeratorDecision` is P5 L3. The L2 contract is: the audit
+    row exists by the time the tick finishes, idempotently and even if
+    the rest of the tick raises.
+    """
+
+    async def test_no_bus_runs_zero_drains(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        listener, actions, factory, _ = _build(rules=_registry(quiet))
+
+        await listener(_state(tick_id=0))
+
+        # Only the decision/eval session was opened — no separate commands tx.
+        assert len(factory.spawned) == 1
+        assert all(a.kind != "researcher_action_add" for a in actions)
+
+    async def test_empty_drain_skips_extra_transaction(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        bus = _FakeCommandBus()
+        listener, _actions, factory, _ = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        assert bus.drain_calls == [SESSION_ID]
+        # No commands -> no second session opened for the commands path.
+        assert len(factory.spawned) == 1
+
+    async def test_drained_commands_persist_to_researcher_actions(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        commands = [
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="flag_moment",
+                payload={"note": "important"},
+            ),
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="set_quietness_budget",
+                payload={"max_utterances_per_10min": 1},
+            ),
+        ]
+        bus = _FakeCommandBus(queues={SESSION_ID: [commands]})
+        listener, actions, factory, _ = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        # First session opens for command persistence, second for the decision tx.
+        assert len(factory.spawned) == 2
+        persisted = [a.payload for a in actions if a.kind == "researcher_action_add"]
+        assert len(persisted) == 2
+        assert all(isinstance(p, ResearcherAction) for p in persisted)
+        rows = [p for p in persisted if isinstance(p, ResearcherAction)]
+        assert {p.command_type for p in rows} == {"flag_moment", "set_quietness_budget"}
+        # Each row's PK is the wire-shape command_id (idempotency anchor).
+        assert {p.id for p in rows} == {c.command_id for c in commands}
+        # Payload survives the dict() copy and lands on the row verbatim.
+        assert any(p.payload == {"note": "important"} for p in rows)
+
+    async def test_invalid_researcher_id_is_skipped_not_raised(self) -> None:
+        """A non-UUID researcher_id can't violate the typed DB column; skip the row."""
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        bad = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            researcher_id="not-a-uuid",
+            payload={},
+        )
+        good = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "good one"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[bad, good]]})
+        listener, actions, _factory, _ = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        persisted = [a.payload for a in actions if a.kind == "researcher_action_add"]
+        # Only the valid researcher_id command lands.
+        assert len(persisted) == 1
+        row = persisted[0]
+        assert isinstance(row, ResearcherAction)
+        assert row.id == good.command_id
+
+    async def test_drain_runs_before_rule_resolution(self) -> None:
+        """The bus must be drained before the rules path opens its DB tx.
+
+        This matters for §6 step 2 — if a tick later short-circuits (e.g.
+        the rules path raises), the audit row for the command still landed
+        first.
+        """
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, factory, _ = _build(rules=_registry(firing), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        # Order of session opens: commands first, then the decision tx.
+        kinds = [a.kind for a in actions]
+        researcher_idx = kinds.index("researcher_action_add")
+        decision_idx = kinds.index("decision_add")
+        assert researcher_idx < decision_idx
+        assert len(factory.spawned) == 2
