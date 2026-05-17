@@ -18,6 +18,7 @@ import { findSessionById } from '@/features/sessions';
 import { auth } from '@/lib/auth';
 import { clientEnv } from '@/lib/env';
 
+import { ControlBar } from './control-bar';
 import { DecisionLog } from './decision-log';
 import { LiveTranscript } from './live-transcript';
 import { ParticipantTiles } from './participant-tiles';
@@ -86,6 +87,8 @@ export default async function SessionDetailPage({
           inviteUrl={inviteUrl}
           initialStatus={session.status}
         />
+
+        <ControlBar sessionId={session.id} status={session.status} />
 
         <ParticipantTiles sessionId={session.id} />
         <LiveTranscript sessionId={session.id} />
