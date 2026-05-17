@@ -20,7 +20,24 @@
         "out/**",
         "src/generated/**"
       ],
-      "env": ["NEXT_PUBLIC_*", "SENTRY_*", "OTEL_*", "SKIP_ENV_VALIDATION"]
+      "env": [
+        "NEXT_PUBLIC_*",
+        "SENTRY_*",
+        "OTEL_*",
+        "SKIP_ENV_VALIDATION",
+        "DATABASE_URL",
+        "DATABASE_URL_POOLED",
+        "DATABASE_URL_DIRECT",
+        "DATABASE_URL_ENGINE",
+        "REDIS_URL",
+        "REDIS_NAMESPACE",
+        "AUTH_*",
+        "RESEND_API_KEY",
+        "R2_*",
+        "LIVEKIT_*",
+        "ENGINE_BASE_URL",
+        "ENGINE_ADMIN_TOKEN"
+      ]
     },
     "dev": {
       "cache": false,
