@@ -17,3 +17,12 @@ export {
 export type { DecisionLogColumn } from './decision-log';
 export { formatSnapshotsJsonl, snapshotToJsonl } from './state-snapshots';
 export type { StateSnapshotJsonl } from './state-snapshots';
+export {
+  buildFfmpegArgs,
+  CLIP_AUDIO_BITRATE,
+  computeClipWindow,
+  DEFAULT_CLIP_PAD_SEC,
+  makeClipFilename,
+  spawnFfmpegClipStream,
+} from './audio-clip';
+export type { ClipExtractOptions, ClipExtractResult, ClipWindow, SpawnFn } from './audio-clip';

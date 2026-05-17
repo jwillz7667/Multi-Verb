@@ -234,12 +234,18 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
         </div>
 
         {/*
-          L10 — transcript exports (.txt + .vtt) wired to
-          /api/sessions/[id]/exports/transcript. L11–L13 disabled
-          placeholders still render at the same physical footprint so
-          the page doesn't reflow when those layers land.
+          L10–L13 — every download a researcher needs to take the
+          session offline (brief §11.2). Flag-driven clip downloads
+          gate on `has_composite_recording`: until the egress webhook
+          writes the mp4 key, the panel shows a "(recording pending)"
+          placeholder rather than letting the researcher click into a
+          guaranteed 422.
         */}
-        <ReplayExports sessionId={session.id} />
+        <ReplayExports
+          sessionId={session.id}
+          flags={flags}
+          hasRecording={session.has_composite_recording}
+        />
 
         <button
           type="button"

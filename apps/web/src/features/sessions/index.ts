@@ -18,6 +18,7 @@ export type { PublishCommandInput } from './commands';
 export {
   findDecisionSessionId,
   findSessionById,
+  findSessionFlagById,
   findSessionForReplay,
   findSnapshotAtOrBefore,
   iterateAllDecisionsForSession,
