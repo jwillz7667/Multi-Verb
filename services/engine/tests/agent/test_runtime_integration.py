@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,11 @@ from verbio_engine.realtime import (
     StateSnapshotEventEnvelope,
     TranscriptEvent,
     UtteranceEventEnvelope,
+)
+from verbio_engine.recordings import (
+    EgressHandle,
+    composite_audio_key,
+    participant_audio_key,
 )
 from verbio_engine.tick_loop import FakeClock
 
@@ -753,3 +759,131 @@ async def test_persist_utterance_triggers_embed_pipeline(
     assert final_state.study_prompt_embedding is not None
     assert final_state.rolling_transcript_30s_embedding is not None
     assert final_state.embedding_model_name == "rec-embed-v1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 L2: egress dispatcher wiring
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _RecordingDispatcher:
+    """In-memory `EgressDispatcher` double used by the wiring tests."""
+
+    composite_calls: list[tuple[uuid.UUID, str]] = field(default_factory=list)
+    participant_calls: list[tuple[uuid.UUID, str, str]] = field(default_factory=list)
+    closed: bool = False
+
+    async def start_room_composite(
+        self,
+        *,
+        session_id: uuid.UUID,
+        room_name: str,
+    ) -> EgressHandle | None:
+        self.composite_calls.append((session_id, room_name))
+        return EgressHandle(
+            egress_id=f"EG_C_{len(self.composite_calls):04d}",
+            r2_key=composite_audio_key(session_id),
+        )
+
+    async def start_participant_audio(
+        self,
+        *,
+        session_id: uuid.UUID,
+        room_name: str,
+        identity: str,
+    ) -> EgressHandle | None:
+        self.participant_calls.append((session_id, room_name, identity))
+        return EgressHandle(
+            egress_id=f"EG_P_{len(self.participant_calls):04d}",
+            r2_key=participant_audio_key(session_id, identity),
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.integration
+async def test_on_room_connected_starts_composite_egress(
+    engine: AsyncEngine,
+) -> None:
+    """`on_room_connected` must fire composite egress after marking live."""
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    async with factory() as db, db.begin():
+        db.add(Session(livekit_room_name=room_name, status="scheduled"))
+
+    dispatcher = _RecordingDispatcher()
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room_name,
+        egress_dispatcher=dispatcher,
+    )
+
+    session_row = await runtime.on_room_connected()
+
+    assert dispatcher.composite_calls == [(session_row.id, room_name)]
+    assert dispatcher.participant_calls == []
+
+
+@pytest.mark.integration
+async def test_on_participant_joined_fires_egress_for_real_participants_only(
+    engine: AsyncEngine,
+) -> None:
+    """Participants + researchers record; moderator never does.
+
+    Moderator audio is captured in the room composite — a dedicated
+    moderator track would be redundant and would clutter the per-track
+    folder. The state event itself is also suppressed for the
+    moderator (the rules POV treats them as not-a-participant), so the
+    egress branch must match that gate.
+    """
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    async with factory() as db, db.begin():
+        db.add(Session(livekit_room_name=room_name, status="scheduled"))
+
+    dispatcher = _RecordingDispatcher()
+    runtime = SessionRuntime(
+        session_factory=factory,
+        room_name=room_name,
+        egress_dispatcher=dispatcher,
+    )
+    await runtime.on_room_connected()
+
+    await runtime.on_participant_joined(
+        ParticipantSnapshot(identity="id-p1", display_name="P1", role="participant"),
+    )
+    await runtime.on_participant_joined(
+        ParticipantSnapshot(identity="id-r1", display_name="R1", role="researcher"),
+    )
+    await runtime.on_participant_joined(
+        ParticipantSnapshot(
+            identity="id-moderator",
+            display_name="Mod",
+            role="moderator",
+        ),
+    )
+
+    identities = [identity for _, _, identity in dispatcher.participant_calls]
+    assert identities == ["id-p1", "id-r1"]
+    assert all(sid == runtime.session_id for sid, _, _ in dispatcher.participant_calls)
+
+
+@pytest.mark.integration
+async def test_runtime_without_dispatcher_skips_egress_calls(
+    engine: AsyncEngine,
+) -> None:
+    """Default (no dispatcher) wiring keeps the lifecycle working without recording."""
+    room_name = f"room-{uuid.uuid4()}"
+    factory = create_session_factory(engine)
+    async with factory() as db, db.begin():
+        db.add(Session(livekit_room_name=room_name, status="scheduled"))
+
+    runtime = SessionRuntime(session_factory=factory, room_name=room_name)
+
+    # No egress dispatcher → no AttributeError, just a silent skip.
+    await runtime.on_room_connected()
+    await runtime.on_participant_joined(
+        ParticipantSnapshot(identity="id-no-rec", display_name="X", role="participant"),
+    )

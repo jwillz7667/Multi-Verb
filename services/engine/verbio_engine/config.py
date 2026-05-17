@@ -87,6 +87,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ----- Cloudflare R2 (Phase 6: recording egress destination) ----------
+    # Required when the recordings dispatcher runs — the engine never
+    # uploads bytes itself, it hands these to LiveKit Cloud which writes
+    # directly to R2. All four must be set together; when any is missing
+    # the worker skips dispatcher construction and runs in
+    # shadow-recording mode (decisions still persist, no audio file).
+    # Mirrors the four vars consumed by the web service.
+    r2_account_id: str | None = Field(default=None, alias="R2_ACCOUNT_ID")
+    r2_access_key_id: SecretStr | None = Field(default=None, alias="R2_ACCESS_KEY_ID")
+    r2_secret_access_key: SecretStr | None = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
+    r2_bucket: str | None = Field(default=None, alias="R2_BUCKET")
+
     # ----- Service name (for observability) --------------------------------
     service_name: str = Field(default="verbio-engine", alias="OTEL_SERVICE_NAME_ENGINE")
 

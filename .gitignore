@@ -147,11 +147,22 @@ apps/web/src/generated/prisma/
 # -----------------------------------------------------------------------------
 fixtures/audio/recorded/
 recordings/
-# Carve-out: the web app's `recordings` feature owns the R2 client + replay
-# code. The broad `recordings/` rule above is meant to catch any *runtime*
-# recording-output directory; this exception preserves source code.
+# Carve-outs: the broad `recordings/` rule above is meant to catch any
+# *runtime* recording-output directory. These exceptions preserve source
+# directories that happen to share the name:
+#   - apps/web/src/features/recordings/ — web R2 client + replay UI
+#   - services/engine/verbio_engine/recordings/ — engine egress dispatcher
+#   - services/engine/tests/recordings/ — engine egress dispatcher tests
 !apps/web/src/features/recordings/
 !apps/web/src/features/recordings/**
+!services/engine/verbio_engine/recordings/
+!services/engine/verbio_engine/recordings/**
+!services/engine/tests/recordings/
+!services/engine/tests/recordings/**
+# But still ignore Python bytecode caches inside the engine carve-outs —
+# `__pycache__/` at the top of this file gets overridden by the `**` rules.
+services/engine/verbio_engine/recordings/**/__pycache__/
+services/engine/tests/recordings/**/__pycache__/
 *.wav.local
 *.mp3.local
 

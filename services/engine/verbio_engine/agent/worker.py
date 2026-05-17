@@ -38,6 +38,12 @@ from verbio_engine.realtime import (
     NullEventPublisher,
     RedisEventPublisher,
 )
+from verbio_engine.recordings import (
+    EgressDispatcher,
+    LiveKitEgressDispatcher,
+    NullEgressDispatcher,
+    r2_config_from_settings,
+)
 from verbio_engine.rules import build_v1_registry
 
 if TYPE_CHECKING:
@@ -107,6 +113,13 @@ async def _entrypoint_with_runtime(
         else NullCommandBus()
     )
 
+    # P6 L2: LiveKit egress dispatcher. Only constructed when R2 is
+    # fully configured (all four R2_* env vars present) — otherwise
+    # the worker runs in shadow-recording mode (decisions persist,
+    # no audio files produced). LiveKit creds are already validated by
+    # `run_worker` so we can pass them through unwrapped here.
+    egress_dispatcher: EgressDispatcher = _build_egress_dispatcher(settings)
+
     room: rtc.Room = ctx.room  # type: ignore[attr-defined]
     # `rules_registry_factory` opts the runtime into the per-session
     # registry build path (Phase 3 L11). The factory consumes the
@@ -120,11 +133,79 @@ async def _entrypoint_with_runtime(
         publisher=publisher,
         rules_registry_factory=build_v1_registry,
         command_bus=command_bus,
+        egress_dispatcher=egress_dispatcher,
     )
 
-    # Hold strong references to in-flight tasks so they don't get
-    # garbage-collected mid-await; otherwise asyncio cancels them
-    # silently (RUF006 / asyncio docs).
+    # `room.on(...)` inside the helper anchors the handler closures
+    # (and the pending-task set they close over) for the lifetime of
+    # `room` — no explicit reference needed here.
+    _register_room_handlers(room=room, runtime=runtime, stt=stt)
+
+    # Flush session-end, close the SSE publisher, and dispose the DB
+    # pool when LiveKit tears the job down. Order matters: stop the
+    # tick loop FIRST so the final snapshot lands; THEN mark the session
+    # ended (audit trail) BEFORE closing the publisher so any
+    # post-disconnect events still try to fan out.
+    async def _shutdown() -> None:
+        await _safe(runtime.stop_tick_loop())
+        await _safe(runtime.on_room_disconnected())
+        await _safe(publisher.aclose())
+        await _safe(command_bus.aclose())
+        await _safe(egress_dispatcher.aclose())
+        await engine.dispose()
+
+    ctx.add_shutdown_callback(_shutdown)  # type: ignore[attr-defined]
+
+    # `AUDIO_ONLY` subscribes to remote audio tracks and ignores video.
+    # Publishing is independently clamped via WorkerPermissions below.
+    from livekit.agents import AutoSubscribe
+
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)  # type: ignore[attr-defined]
+
+    try:
+        session_row = await runtime.on_room_connected()
+    except UnknownSessionError:
+        log.error(
+            "agent.unknown_session",
+            room_name=room.name,
+            hint="web must create the sessions row before dispatching the agent",
+        )
+        await ctx.shutdown()  # type: ignore[attr-defined]
+        return
+
+    # `actual_start` was just stamped by `mark_started`; it anchors the
+    # StateStore's elapsed-time accounting so dashboard tiles agree with
+    # `sessions.actual_start` to the millisecond.
+    started_at = session_row.actual_start
+    if started_at is None:
+        # Defensive: `mark_started` always sets it, but if a future
+        # change makes that conditional, fall back to the row creation
+        # time so the tick loop never crashes on a None deref.
+        started_at = session_row.created_at
+    runtime.start_tick_loop(started_at=started_at)
+
+    log.info("agent.ready", room_name=room.name, session_id=str(runtime.session_id))
+
+
+def _register_room_handlers(
+    *,
+    room: Any,
+    runtime: SessionRuntime,
+    stt: agents_stt.STT[Any],
+) -> None:
+    """Wire LiveKit room events to runtime callbacks + STT spawning.
+
+    Registers `participant_connected`, `participant_disconnected`, and
+    `track_subscribed`. Must be called BEFORE `ctx.connect` — otherwise
+    the initial burst of events for participants who joined before the
+    agent is missed.
+
+    The `pending` set anchors fire-and-forget tasks so asyncio doesn't
+    garbage-collect them mid-await (RUF006); it stays alive as long as
+    the handler closures are registered on `room`.
+    """
+    from livekit import rtc
+
     pending: set[asyncio.Task[None]] = set()
 
     def _spawn(coro: object) -> None:
@@ -132,9 +213,6 @@ async def _entrypoint_with_runtime(
         pending.add(task)
         task.add_done_callback(pending.discard)
 
-    # Register handlers BEFORE awaiting connect; otherwise we miss the
-    # initial burst of participant_connected / track_subscribed events
-    # for participants who joined before the agent did.
     def _on_participant_connected(participant: rtc.RemoteParticipant) -> None:
         snapshot = ParticipantSnapshot.from_livekit(
             identity=participant.identity,
@@ -173,50 +251,6 @@ async def _entrypoint_with_runtime(
     room.on("participant_disconnected", _on_participant_disconnected)
     room.on("track_subscribed", _on_track_subscribed)
 
-    # Flush session-end, close the SSE publisher, and dispose the DB
-    # pool when LiveKit tears the job down. Order matters: stop the
-    # tick loop FIRST so the final snapshot lands; THEN mark the session
-    # ended (audit trail) BEFORE closing the publisher so any
-    # post-disconnect events still try to fan out.
-    async def _shutdown() -> None:
-        await _safe(runtime.stop_tick_loop())
-        await _safe(runtime.on_room_disconnected())
-        await _safe(publisher.aclose())
-        await _safe(command_bus.aclose())
-        await engine.dispose()
-
-    ctx.add_shutdown_callback(_shutdown)  # type: ignore[attr-defined]
-
-    # `AUDIO_ONLY` subscribes to remote audio tracks and ignores video.
-    # Publishing is independently clamped via WorkerPermissions below.
-    from livekit.agents import AutoSubscribe
-
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)  # type: ignore[attr-defined]
-
-    try:
-        session_row = await runtime.on_room_connected()
-    except UnknownSessionError:
-        log.error(
-            "agent.unknown_session",
-            room_name=room.name,
-            hint="web must create the sessions row before dispatching the agent",
-        )
-        await ctx.shutdown()  # type: ignore[attr-defined]
-        return
-
-    # `actual_start` was just stamped by `mark_started`; it anchors the
-    # StateStore's elapsed-time accounting so dashboard tiles agree with
-    # `sessions.actual_start` to the millisecond.
-    started_at = session_row.actual_start
-    if started_at is None:
-        # Defensive: `mark_started` always sets it, but if a future
-        # change makes that conditional, fall back to the row creation
-        # time so the tick loop never crashes on a None deref.
-        started_at = session_row.created_at
-    runtime.start_tick_loop(started_at=started_at)
-
-    log.info("agent.ready", room_name=room.name, session_id=str(runtime.session_id))
-
 
 def _build_stt(*, settings: Settings, deepgram_key: str) -> agents_stt.STT[Any]:
     """Construct the VAD-gated Deepgram STT used by every track in this job.
@@ -241,6 +275,41 @@ def _build_stt(*, settings: Settings, deepgram_key: str) -> agents_stt.STT[Any]:
     )
     vad = silero.VAD.load(force_cpu=True)
     return StreamAdapter(stt=base, vad=vad)
+
+
+def _build_egress_dispatcher(settings: Settings) -> EgressDispatcher:
+    """Construct the LiveKit-backed dispatcher when R2 + LiveKit are present.
+
+    Returns a `NullEgressDispatcher` when R2 isn't fully configured —
+    the worker still runs (decisions persist, audio playback works,
+    rules fire), just without producing recordings. The decision is
+    logged so ops can spot a shadow-recording deployment quickly.
+
+    `run_worker` has already validated LiveKit credentials at this
+    point (the agent can't connect to a room without them), so the
+    `LiveKitAPI()` constructor reads its values from the same env vars
+    without us having to thread them through explicitly.
+    """
+    r2 = r2_config_from_settings(settings)
+    if r2 is None:
+        log.info(
+            "agent.egress_dispatcher_disabled",
+            reason="r2_not_configured",
+        )
+        return NullEgressDispatcher()
+
+    # Lazy import keeps the worker module importable in environments
+    # without `livekit-api` (e.g., unit-test runs that don't touch
+    # this code path).
+    from livekit.api import LiveKitAPI
+
+    def _make_api() -> LiveKitAPI:
+        # LiveKitAPI reads URL/key/secret from the matching env vars
+        # by default. We validated them at `run_worker` boot.
+        return LiveKitAPI()
+
+    log.info("agent.egress_dispatcher_enabled", r2_bucket=r2.bucket)
+    return LiveKitEgressDispatcher(r2=r2, api_factory=_make_api)
 
 
 async def _safe(coro: object) -> None:

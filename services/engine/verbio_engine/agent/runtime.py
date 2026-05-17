@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from verbio_engine.domain.session_state import SessionState
     from verbio_engine.embeddings import EmbeddingProvider
     from verbio_engine.persistence import Participant, Session, UtteranceInsert
+    from verbio_engine.recordings import EgressDispatcher
     from verbio_engine.rules import RulesRegistry
     from verbio_engine.state.events import StateEvent
 
@@ -152,6 +153,7 @@ class SessionRuntime:
         rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = None,
         executor_dispatcher: ExecutionDispatcher | None = None,
         command_bus: CommandBus | None = None,
+        egress_dispatcher: EgressDispatcher | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
@@ -183,6 +185,12 @@ class SessionRuntime:
         # tests and for shadow-mode environments where the web service
         # isn't yet sending researcher commands.
         self._command_bus: CommandBus | None = command_bus
+        # P6 L2: optional LiveKit egress dispatcher. When wired the
+        # runtime starts a composite recording at `on_room_connected`
+        # and a per-participant audio recording at each
+        # `on_participant_joined`. Left None when R2 is unconfigured —
+        # the session still runs, just without producing a recording.
+        self._egress_dispatcher: EgressDispatcher | None = egress_dispatcher
         # Optional embedding pipeline (Phase 3 L7). When `provider` is
         # None the runtime simply doesn't embed anything — topic_drift
         # will read `None` for both vectors and stay silent. The
@@ -298,6 +306,12 @@ class SessionRuntime:
         the first start — so a worker restart preserves the original
         configuration even if the study has been edited in the meantime.
 
+        Phase 6 L2: after the session row is marked live, kick off the
+        room-composite recording so the entire session is captured from
+        first second to last. Egress failures are logged inside the
+        dispatcher and do not propagate — the session keeps running
+        even when recording is unavailable.
+
         Raises:
             UnknownSessionError: no row matches `self._room_name`.
         """
@@ -309,7 +323,17 @@ class SessionRuntime:
             await sess_repo.mark_started(row)
             self._session_id = row.id
             await self._snapshot_session_config(db, row)
-            return row
+        # Egress is dispatched AFTER the transaction commits so a slow
+        # LiveKit Cloud doesn't extend the DB transaction. The call
+        # itself is await-blocking but typically returns in <1s; a
+        # failure surfaces in the egress dispatcher's log without
+        # disrupting room join.
+        if self._egress_dispatcher is not None:
+            await self._egress_dispatcher.start_room_composite(
+                session_id=row.id,
+                room_name=self._room_name,
+            )
+        return row
 
     async def _snapshot_session_config(self, db: AsyncSession, row: Session) -> None:
         """Freeze the study's config into `sessions.config_snapshot`.
@@ -392,7 +416,18 @@ class SessionRuntime:
         self._rules_registry = self._rules_registry_factory(snapshot.rules_config)
 
     async def on_participant_joined(self, snapshot: ParticipantSnapshot) -> Participant:
-        """Upsert the participant row for a connect/reconnect event."""
+        """Upsert the participant row for a connect/reconnect event.
+
+        Phase 6 L2: after the participant row is persisted, kick off a
+        per-participant audio egress for any non-moderator role. The
+        moderator never has a dedicated track recording — its voice is
+        already captured in the room composite, and there's no audit
+        value in a separate moderator-only audio file. Reconnects upsert
+        the same identity, but the dispatcher does not de-dup per
+        participant; LiveKit refuses a second egress for an already-
+        recording identity with a clean error that the dispatcher
+        swallows.
+        """
         async with self._session_factory() as db, db.begin():
             repo = ParticipantRepo(db)
             row = await repo.upsert_on_join(
@@ -417,6 +452,12 @@ class SessionRuntime:
                     display_name=snapshot.display_name,
                 )
             )
+            if self._egress_dispatcher is not None:
+                await self._egress_dispatcher.start_participant_audio(
+                    session_id=self.session_id,
+                    room_name=self._room_name,
+                    identity=snapshot.identity,
+                )
         return row
 
     async def on_participant_left(self, identity: str) -> None:
