@@ -19,6 +19,12 @@ from verbio_engine.commands.bus import (
     RedisCommandStreamBus,
     commands_stream_key,
 )
+from verbio_engine.commands.control import (
+    CONTROL_COMMAND_TYPES,
+    ControlEffects,
+    RuntimeControl,
+    apply_control_commands,
+)
 from verbio_engine.commands.translator import (
     MANUAL_COOLDOWN_SEC,
     OVERRIDING_COMMAND_TYPES,
@@ -31,13 +37,17 @@ from verbio_engine.commands.translator import (
 )
 
 __all__ = [
+    "CONTROL_COMMAND_TYPES",
     "MANUAL_COOLDOWN_SEC",
     "OVERRIDING_COMMAND_TYPES",
     "SPOKEN_COMMAND_TYPES",
     "WHISPER_COMMAND_TYPE",
     "CommandBus",
+    "ControlEffects",
     "NullCommandBus",
     "RedisCommandStreamBus",
+    "RuntimeControl",
+    "apply_control_commands",
     "build_manual_decision",
     "build_whisper_decision",
     "commands_stream_key",

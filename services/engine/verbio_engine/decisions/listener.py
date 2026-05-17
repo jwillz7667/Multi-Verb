@@ -2,7 +2,7 @@
 
 Phase touchpoints: P3 L10 (resolver wired), P4 L8 (executor dispatch),
 P5 L2 (drain commands → audit rows), P5 L3 (manual override path),
-P5 L4 (whisper override path).
+P5 L4 (whisper override path), P5 L5 (non-spoken control plane).
 
 Plugged into the tick loop alongside `PersistAndPublishListener`. Each
 tick this listener:
@@ -12,12 +12,20 @@ tick this listener:
      its own short transaction. Audit-first: the row exists even if a
      later step in this tick raises. The repo is idempotent on
      `command_id` so a restart-replay produces no duplicates.
-  2. Runs `verbio_engine.rules.resolve` against the current
+  2. (P5 L5) Applies non-spoken control commands (mute/unmute,
+     pause/resume, end_session) via `apply_control_commands`. Effects
+     land on the live runtime — the store mute/pause flags flip
+     immediately (next-tick snapshot reflects them), and `end_session`
+     is awaited so the runtime's mark-ended + tick-stop observe each
+     other before this tick completes. The returned `ControlEffects`
+     are consumed by the dispatch gate below to honour the
+     researcher's intent *this* tick, not just the next one.
+  3. Runs `verbio_engine.rules.resolve` against the current
      `SessionState` and the in-process cooldown map. The resolver
      always runs even when a manual override is present — its
      evaluations are still written so the dashboard's "Why quiet now?"
      panel can show what the rules would have done in parallel.
-  3. (P5 L3 + L4) If an overriding researcher command is in the
+  4. (P5 L3 + L4) If an overriding researcher command is in the
      drained batch (force_* or whisper, FIFO from the bus), replace
      the resolver's decision with the manual / whisper one, keeping
      the resolver's decision_id so the per-rule evaluations stay
@@ -26,28 +34,36 @@ tick this listener:
      commands land as `source="researcher_manual"` (mouth phrases the
      hint); whisper commands land as `source="researcher_whisper"`
      (executor sends the hint verbatim, skipping the mouth).
-  4. Opens the decision transaction and writes the `decisions` row +
+  5. (P5 L5) If the post-batch control effects say the moderator is
+     muted, paused, or the session is ending, extend the decision's
+     `suppressed_by` list with the matching reason code(s) — but only
+     when the decision was non-silent in the first place; suppressing
+     a `stay_silent` decision is information-free. This keeps the
+     audit trail honest: researchers see "the moderator wanted to
+     speak but my mute stopped it" rather than the gate being silent.
+  6. Opens the decision transaction and writes the `decisions` row +
      `rule_evaluations` rows together. If an overriding command was
-     processed in step 3, the matching `researcher_actions.resulting_decision_id`
+     processed in step 4, the matching `researcher_actions.resulting_decision_id`
      is stamped in the same transaction so the linkage is atomic with
      the decision it points at. Failure of this transaction leaves the
      audit row (written in step 1) with a null FK — the dashboard can
      show "command issued, no decision produced" for the operator.
-  5. Publishes the `decision` SSE envelope on Redis. Persist-before-
+  7. Publishes the `decision` SSE envelope on Redis. Persist-before-
      publish is the brief's §6 invariant (audit truth first, wire
      second); failures of the Redis side are swallowed by the
      publisher itself.
-  6. Updates the cooldown map for the rule that won, so the next
+  8. Updates the cooldown map for the rule that won, so the next
      tick's resolver call sees the fresh `last_won_at`. Override
      decisions don't update cooldowns (no `triggering_rule`) —
      researcher overrides never debit the auto-rule budget.
-  7. (P4 L8 / P5 L3 / P5 L4) When an `ExecutionDispatcher` is wired AND
-     the decision is non-silent AND source is `auto`,
-     `researcher_manual`, or `researcher_whisper`, hands the decision
-     off to the dispatcher — the actual mouth/TTS/publisher run
-     happens in a background task so the tick loop never blocks
-     (brief §6 step 6). The executor itself branches on source to skip
-     the mouth for whisper decisions.
+  9. (P4 L8 / P5 L3 / P5 L4 / P5 L5) When an `ExecutionDispatcher` is
+     wired AND the decision is non-silent AND source is `auto`,
+     `researcher_manual`, or `researcher_whisper` AND no control
+     effect (mute / pause / session_ended) is in force, hands the
+     decision off to the dispatcher — the actual mouth/TTS/publisher
+     run happens in a background task so the tick loop never blocks
+     (brief §6 step 6). The executor itself branches on source to
+     skip the mouth for whisper decisions.
 
 Shadow-mode behaviour (Phase 3): when no dispatcher is wired, the
 listener is identical to its P3 L10 form — every decision lands as
@@ -77,6 +93,8 @@ from typing import TYPE_CHECKING, Protocol
 from verbio_engine.commands import (
     SPOKEN_COMMAND_TYPES,
     WHISPER_COMMAND_TYPE,
+    ControlEffects,
+    apply_control_commands,
     build_manual_decision,
     build_whisper_decision,
     first_overriding_command,
@@ -98,7 +116,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from verbio_engine.commands import CommandBus
+    from verbio_engine.commands import CommandBus, RuntimeControl
     from verbio_engine.decisions.dispatcher import ExecutionDispatcher
     from verbio_engine.domain.command import ResearcherCommand
     from verbio_engine.domain.session_state import SessionState
@@ -130,6 +148,7 @@ class DecisionTickListener:
         "_identity_resolver",
         "_publisher",
         "_rules",
+        "_runtime_control",
         "_session_factory",
     )
 
@@ -142,6 +161,7 @@ class DecisionTickListener:
         identity_resolver: IdentityResolver,
         command_bus: CommandBus | None = None,
         executor_dispatcher: ExecutionDispatcher | None = None,
+        runtime_control: RuntimeControl | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -160,19 +180,65 @@ class DecisionTickListener:
         # handed to the dispatcher after persist+publish; the tick
         # loop continues immediately (brief §6 step 6).
         self._executor_dispatcher = executor_dispatcher
+        # P5 L5: optional runtime control surface. When wired AND a
+        # control command is in the drained batch, the listener flips
+        # the runtime's mute/pause flags and (for `end_session`) marks
+        # the session ended + stops the tick loop. Left None when the
+        # runtime is not driving the listener (most unit tests, and
+        # any setup that doesn't accept control commands).
+        self._runtime_control = runtime_control
 
-    async def __call__(self, state: SessionState) -> None:
-        # P5 L2/L3/L4: drain researcher commands at the top of the tick
-        # so the audit row exists even if a later step in this tick
-        # fails. Override commands (force_*, whisper) replace the
-        # resolver's decision below; non-overriding ones (mute, budget,
-        # flag, …) ride along as audit rows only — their semantics land
-        # in later layers (P5 L5+).
+    async def __call__(self, state: SessionState) -> None:  # noqa: PLR0912
+        # PLR0912: this method is the brief's §6 tick pipeline written
+        # top-to-bottom. Splitting it into helpers would scatter the
+        # order across the file without reducing total complexity —
+        # the order itself (audit → control → resolve → override →
+        # gate → persist → publish → dispatch) is the contract.
+        # P5 L2/L3/L4/L5: drain researcher commands at the top of the
+        # tick so the audit row exists even if a later step in this
+        # tick fails. Override commands (force_*, whisper) replace the
+        # resolver's decision below; control commands (mute/pause/end)
+        # mutate the runtime via `apply_control_commands`; the
+        # remaining types (set_quietness_budget, flag_moment) ride
+        # along as audit rows only — their semantics land in L6 / L7.
         commands: list[ResearcherCommand] = []
         if self._command_bus is not None:
             commands = await self._command_bus.drain(state.session_id)
             if commands:
                 await self._persist_commands(commands)
+
+        # P5 L5: apply non-spoken control commands. Effects land on the
+        # live runtime; we also compute the post-batch effective state
+        # so the dispatch gate honours the researcher's intent in *this*
+        # tick (the snapshot we received was projected before commands
+        # were drained). When no runtime control is wired or no control
+        # commands landed, fall back to the snapshot's mute/pause flags
+        # so a pre-existing mute (set out-of-band on the runtime) still
+        # gates dispatch — the snapshot is always the source of truth
+        # for state observed at projection time.
+        if commands and self._runtime_control is not None:
+            effects = await apply_control_commands(
+                commands=commands,
+                control=self._runtime_control,
+                initial_muted=state.moderator_muted,
+                initial_paused=state.is_paused,
+            )
+            if effects.counts:
+                log.info(
+                    "decisions.control_commands_applied",
+                    session_id=str(state.session_id),
+                    tick_id=state.tick_id,
+                    muted_after=effects.muted_after,
+                    paused_after=effects.paused_after,
+                    end_requested=effects.end_requested,
+                    counts=dict(effects.counts),
+                )
+        else:
+            effects = ControlEffects(
+                muted_after=state.moderator_muted,
+                paused_after=state.is_paused,
+                end_requested=False,
+            )
 
         override = first_overriding_command(commands)
 
@@ -207,6 +273,25 @@ class DecisionTickListener:
                     state=state,
                     t=state.t,
                     decision_id=output.decision.decision_id,
+                )
+
+        # P5 L5: stamp the control-plane gate onto non-silent decisions
+        # so the audit row carries the researcher's intent ("would have
+        # spoken, but I muted") rather than silently dropping the
+        # would-be utterance. stay_silent decisions are left alone —
+        # adding "muted" to a row the moderator wasn't going to speak
+        # anyway is information-free noise on the dashboard.
+        if decision.action != "stay_silent":
+            extra: list[str] = []
+            if effects.muted_after:
+                extra.append("muted")
+            if effects.paused_after:
+                extra.append("paused")
+            if effects.end_requested:
+                extra.append("session_ended")
+            if extra:
+                decision = decision.model_copy(
+                    update={"suppressed_by": [*decision.suppressed_by, *extra]},
                 )
 
         target_pid = self._resolve_target(decision.target_participant_id)
@@ -284,17 +369,24 @@ class DecisionTickListener:
         if decision.triggering_rule is not None:
             self._cooldowns[decision.triggering_rule] = state.t
 
-        # P4 L8 / P5 L3 / P5 L4: dispatch non-silent decisions to the
-        # executor. `auto` is the rules engine; `researcher_manual` is
-        # a force_* override (mouth phrases the hint);
+        # P4 L8 / P5 L3 / P5 L4 / P5 L5: dispatch non-silent decisions
+        # to the executor. `auto` is the rules engine; `researcher_manual`
+        # is a force_* override (mouth phrases the hint);
         # `researcher_whisper` is verbatim text (executor's whisper
         # branch skips the mouth). All three share the dispatcher path
         # because §6 step 6's "tick loop never blocks on TTS" applies
         # to any audible output, regardless of how the text was chosen.
+        # P5 L5: the post-batch effective control state gates dispatch.
+        # If mute/pause/end is in force at the end of the drained
+        # batch, we skip the dispatcher — the decision row already
+        # carries the matching suppressed_by reason for the audit.
         if (
             self._executor_dispatcher is not None
             and decision.action != "stay_silent"
             and decision.source in {"auto", "researcher_manual", "researcher_whisper"}
+            and not effects.muted_after
+            and not effects.paused_after
+            and not effects.end_requested
         ):
             self._executor_dispatcher.dispatch(decision, state)
 

@@ -538,6 +538,13 @@ class SessionRuntime:
                 identity_resolver=self._identity_to_db_uuid,
                 command_bus=self._command_bus,
                 executor_dispatcher=self._executor_dispatcher,
+                # P5 L5: the runtime is the RuntimeControl provider —
+                # it owns the state store (mute/pause flips) and the
+                # tick loop (end_session stop). Pre-wired only when
+                # the command bus is too; without a bus there's no
+                # path for control commands to arrive, so registering
+                # the control surface buys nothing.
+                runtime_control=self if self._command_bus is not None else None,
             )
         listener = _compose_tick_listeners(snapshot_listener, decision_listener)
         self._tick_loop = TickLoop(
@@ -677,6 +684,64 @@ class SessionRuntime:
             if row is None:
                 return
             await sess_repo.mark_ended(row)
+
+    # ----- RuntimeControl surface (P5 L5) ------------------------------
+
+    def set_muted(self, *, muted: bool) -> None:
+        """Flip `SessionState.moderator_muted` via the state store.
+
+        No-op when the tick loop has not been started yet (store is
+        None) — `start_tick_loop` would not see the toggle anyway, and
+        researchers cannot issue commands before the bus is wired. The
+        no-op keeps the API safe to call from any lifecycle point.
+        """
+        if self._state_store is None:
+            return
+        self._state_store.set_moderator_muted(muted=muted)
+
+    def set_pause(self, *, paused: bool) -> None:
+        """Flip `SessionState.is_paused` via the state store.
+
+        Same no-op-before-start guard as `set_muted`. The brief's
+        "tick loop still runs but moderator is suppressed from
+        speaking" semantics live entirely in the dispatch gate; the
+        loop itself does not check this flag.
+        """
+        if self._state_store is None:
+            return
+        self._state_store.set_pause(paused=paused)
+
+    async def request_end_session(self, *, reason: str | None) -> None:
+        """Mark the session ended in Postgres and stop the tick loop.
+
+        Called from the decision listener when an `end_session` command
+        is processed. The DB write happens first so the audit trail
+        records the end timestamp regardless of how the worker tears
+        down. The tick loop stop is a synchronous flag flip; the loop's
+        outer `while not stop_event` check exits on the next iteration
+        (or sooner — `_race` listens for the stop event during sleep).
+
+        `reason` is informational only — it's already persisted on the
+        matching `researcher_actions` row by the listener's audit
+        write, and the runtime has no field of its own to store it.
+        Threaded through anyway so a future log line can carry it.
+
+        Idempotent: re-entry after the session is already `ended` or
+        after the tick loop has already been stopped is a no-op.
+        """
+        if self._session_id is not None:
+            async with self._session_factory() as db, db.begin():
+                sess_repo = SessionRepo(db)
+                row = await sess_repo.get_by_room_name(self._room_name)
+                if row is not None:
+                    await sess_repo.mark_ended(row)
+        if self._tick_loop is not None:
+            self._tick_loop.stop()
+        log.info(
+            "runtime.end_session_requested",
+            session_id=str(self._session_id) if self._session_id else None,
+            reason=reason,
+        )
 
 
 def _compose_tick_listeners(

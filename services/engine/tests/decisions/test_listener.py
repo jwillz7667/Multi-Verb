@@ -212,6 +212,8 @@ def _state(
     tick_id: int = 0,
     t: datetime | None = None,
     participants: dict[str, ParticipantState] | None = None,
+    moderator_muted: bool = False,
+    is_paused: bool = False,
 ) -> SessionState:
     when = t if t is not None else TICK_ZERO + timedelta(milliseconds=500 * tick_id)
     return SessionState(
@@ -224,6 +226,8 @@ def _state(
         currently_speaking_count=0,
         silence_run_sec=0.0,
         quietness_budget=QuietnessBudget(),
+        moderator_muted=moderator_muted,
+        is_paused=is_paused,
     )
 
 
@@ -288,6 +292,7 @@ def _build(
     fail_on_decision_flush: bool = False,
     executor_dispatcher: _RecordingDispatcher | None = None,
     command_bus: _FakeCommandBus | None = None,
+    runtime_control: object = None,
 ) -> tuple[DecisionTickListener, list[_RecordingAction], _FakeSessionFactory, _FakePublisher]:
     actions: list[_RecordingAction] = []
     factory = _FakeSessionFactory(actions=actions, fail_on_decision_flush=fail_on_decision_flush)
@@ -300,6 +305,7 @@ def _build(
         identity_resolver=resolver,  # type: ignore[arg-type]
         command_bus=command_bus,
         executor_dispatcher=executor_dispatcher,  # type: ignore[arg-type]
+        runtime_control=runtime_control,  # type: ignore[arg-type]
     )
     return listener, actions, factory, publisher
 
@@ -1166,3 +1172,413 @@ class TestWhisperOverride:
         assert isinstance(persisted, Decision)
         assert persisted.source == "researcher_manual"
         assert persisted.researcher_hint == "mouth-phrased intent"
+
+
+@dataclass(slots=True)
+class _FakeRuntimeControl:
+    """RuntimeControl stand-in — records each call so tests can assert order."""
+
+    calls: list[tuple[str, object]] = field(default_factory=list)
+
+    def set_muted(self, *, muted: bool) -> None:
+        self.calls.append(("set_muted", muted))
+
+    def set_pause(self, *, paused: bool) -> None:
+        self.calls.append(("set_pause", paused))
+
+    async def request_end_session(self, *, reason: str | None) -> None:
+        self.calls.append(("request_end_session", reason))
+
+
+class TestControlCommands:
+    """Non-spoken control commands (mute/pause/end_session) — P5 L5.
+
+    Asserts the three places control commands matter in the listener:
+
+      * The runtime control is called in batch order.
+      * Non-silent decisions get `suppressed_by` extended with the
+        matching reason so the audit row tells the truth.
+      * The executor is not dispatched when the post-batch effective
+        state has mute / pause / end_session in force.
+
+    Mute / pause from the snapshot (set out-of-band on the runtime,
+    not via the bus) is also covered — the gate must respect them
+    regardless of how they got there.
+    """
+
+    async def test_mute_command_flips_state_and_suppresses_dispatch(self) -> None:
+        # A firing rule wants the moderator to prompt, but a mute
+        # command lands in the same batch. Expected: decision still
+        # persists (audit intact), but the dispatcher is not invoked.
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="mute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        # Runtime received the mute toggle.
+        assert ("set_muted", True) in control.calls
+
+        # Decision was persisted with `muted` in suppressed_by.
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "prompt_participant"
+        assert "muted" in persisted.suppressed_by
+        assert persisted.was_executed is False
+
+        # Dispatcher was not invoked — the gate held.
+        assert dispatcher.dispatched == []
+
+    async def test_unmute_command_clears_state_allowing_dispatch(self) -> None:
+        # Start the tick with the snapshot already muted; an unmute
+        # in the batch should lift the gate for this tick.
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="unmute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0, moderator_muted=True))
+
+        assert ("set_muted", False) in control.calls
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        # No 'muted' in suppressed_by — the unmute lifted the gate.
+        assert "muted" not in persisted.suppressed_by
+        # Dispatcher invoked — utterance can flow.
+        assert len(dispatcher.dispatched) == 1
+
+    async def test_pause_command_suppresses_dispatch_with_paused_code(self) -> None:
+        # Pause has the same dispatch-gating effect as mute but uses a
+        # distinct suppressed_by code so researchers can tell which
+        # action stopped the moderator from speaking.
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="pause_session",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        assert ("set_pause", True) in control.calls
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "paused" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
+
+    async def test_resume_command_lifts_pause_for_this_tick(self) -> None:
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="resume_session",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0, is_paused=True))
+
+        assert ("set_pause", False) in control.calls
+        assert len(dispatcher.dispatched) == 1
+
+    async def test_end_session_marks_decision_and_blocks_dispatch(self) -> None:
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="end_session",
+            payload={"reason": "wrapping up"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        # Runtime was asked to end the session with the supplied reason.
+        assert ("request_end_session", "wrapping up") in control.calls
+
+        # The would-be utterance is recorded with session_ended in
+        # suppressed_by so the audit shows the end aborted it.
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "session_ended" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
+
+    async def test_snapshot_muted_state_gates_dispatch_without_any_commands(
+        self,
+    ) -> None:
+        # The runtime may have been muted out-of-band (e.g., via a
+        # supervisor call before the bus came up). The snapshot is the
+        # source of truth, and the gate must respect it even with an
+        # empty command batch.
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        dispatcher = _RecordingDispatcher()
+        # No command bus, no runtime control — pure snapshot state.
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0, moderator_muted=True))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "muted" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
+
+    async def test_snapshot_paused_state_gates_dispatch_without_any_commands(
+        self,
+    ) -> None:
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        dispatcher = _RecordingDispatcher()
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0, is_paused=True))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "paused" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
+
+    async def test_stay_silent_decisions_not_marked_when_muted(self) -> None:
+        # If the resolver chose stay_silent anyway, muted/paused
+        # shouldn't be added to suppressed_by — it would be noise on
+        # a row that wasn't going to speak in the first place.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        control = _FakeRuntimeControl()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="mute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            command_bus=bus,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.action == "stay_silent"
+        assert "muted" not in persisted.suppressed_by
+
+    async def test_force_prompt_with_mute_in_same_batch_is_suppressed(self) -> None:
+        # The researcher issued a force_prompt AND a mute in the same
+        # batch. The override fires (so the decision row carries
+        # source=researcher_manual + the hint), but the dispatcher
+        # gate honours the mute — no audio plays.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        force = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="force_prompt",
+            payload={"prompt": "ask the quiet one"},
+        )
+        mute = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="mute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[force, mute]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert persisted.source == "researcher_manual"
+        assert persisted.researcher_hint == "ask the quiet one"
+        assert "muted" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
+
+    async def test_mute_then_unmute_in_same_batch_allows_dispatch(self) -> None:
+        # Researcher double-click: mute → unmute in the same drain.
+        # Final state is unmuted; the firing rule's decision should
+        # dispatch normally.
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        mute = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="mute_moderator",
+            payload={},
+        )
+        unmute = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="unmute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[mute, unmute]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        # Both control calls fire (so the runtime sees each event,
+        # not just the net change).
+        assert control.calls == [("set_muted", True), ("set_muted", False)]
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "muted" not in persisted.suppressed_by
+        assert len(dispatcher.dispatched) == 1
+
+    async def test_audit_row_persisted_for_each_control_command(self) -> None:
+        # The audit-first invariant — every command in the batch lands
+        # in researcher_actions, even pure control ones with no
+        # resulting decision. Verifies the listener still calls the
+        # audit-write path before applying control effects.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        control = _FakeRuntimeControl()
+        commands = [
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="mute_moderator",
+                payload={},
+            ),
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="pause_session",
+                payload={},
+            ),
+        ]
+        bus = _FakeCommandBus(queues={SESSION_ID: [commands]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            command_bus=bus,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        audit_rows = [a for a in actions if a.kind == "researcher_action_add"]
+        assert len(audit_rows) == 2
+
+    async def test_runtime_control_not_called_when_unwired(self) -> None:
+        # If runtime_control is None, control commands are skipped at
+        # the apply step — but they still land in the audit table.
+        # The dispatch gate falls back to the snapshot's mute/pause
+        # flags (False by default → dispatch fires).
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        dispatcher = _RecordingDispatcher()
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="mute_moderator",
+            payload={},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=None,
+        )
+
+        await listener(_state(tick_id=0))
+
+        # Audit row is still there.
+        audit_rows = [a for a in actions if a.kind == "researcher_action_add"]
+        assert len(audit_rows) == 1
+
+        # No mute in suppressed_by — the snapshot defaulted to False
+        # and the command went un-applied.
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "muted" not in persisted.suppressed_by
+        # Dispatcher fired — the gate was open.
+        assert len(dispatcher.dispatched) == 1
+
+    async def test_mute_and_pause_both_recorded_when_in_same_batch(self) -> None:
+        # Both reason codes land on the same row when both gates are
+        # active. Order matches the apply order (mute then pause).
+        firing = _StubRule(name="firing", fires_after_tick=0)
+        control = _FakeRuntimeControl()
+        dispatcher = _RecordingDispatcher()
+        commands = [
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="mute_moderator",
+                payload={},
+            ),
+            _researcher_command(
+                session_id=SESSION_ID,
+                command_type="pause_session",
+                payload={},
+            ),
+        ]
+        bus = _FakeCommandBus(queues={SESSION_ID: [commands]})
+        listener, actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            command_bus=bus,
+            executor_dispatcher=dispatcher,
+            runtime_control=control,
+        )
+
+        await listener(_state(tick_id=0))
+
+        persisted = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(persisted, Decision)
+        assert "muted" in persisted.suppressed_by
+        assert "paused" in persisted.suppressed_by
+        assert dispatcher.dispatched == []
