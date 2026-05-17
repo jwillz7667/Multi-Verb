@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, type SyntheticEvent } from 'react';
 
-import type { ModeratorPersonaInput, StudyRow } from '@/features/studies';
+import type { ModeratorPersonaInput, StudyRow } from '@/features/studies/client';
 
 import { PersonaFormFields } from '../persona-form-fields';
 

@@ -15,13 +15,13 @@ import {
   PERSONA_FORMALITIES,
   PERSONA_TONES,
   VOICE_PROVIDERS,
-} from '@/features/studies';
+} from '@/features/studies/client';
 import type {
   ModeratorPersonaInput,
   PersonaFormality,
   PersonaTone,
   VoiceProvider,
-} from '@/features/studies';
+} from '@/features/studies/client';
 
 interface Props {
   value: ModeratorPersonaInput;

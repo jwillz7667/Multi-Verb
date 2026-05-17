@@ -1,15 +1,16 @@
 /**
- * Studies feature — server public surface.
+ * Studies feature — client-safe public surface.
  *
- * Consumers on the server (route handlers, server actions, UI server
- * components) import from this barrel. Client components (`'use client'`)
- * MUST import from `./client` instead — this barrel re-exports
- * `service.ts` / `repo.ts`, which carry `import 'server-only'` and
- * fail webpack bundling when pulled into the browser chunk.
+ * Client components (`'use client'`) cannot pull the main `index.ts`
+ * barrel because it re-exports `service.ts`/`repo.ts`, which carry
+ * `import 'server-only'` and explode at build time when bundled into
+ * the browser chunk.
+ *
+ * This barrel re-exports only the pure types, constants, and lookup
+ * helpers that have no server-side dependencies. Anything Prisma-
+ * backed lives in the server barrel.
  */
 
-export { createNewStudy, getStudy, listStudies, updateExistingStudy } from './service';
-export { StudyNotFoundError } from './repo';
 export {
   CreateStudyInputSchema,
   DEFAULT_RULES_VERSION,
