@@ -14,7 +14,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
-    exclude: ['node_modules', '.next', 'dist', 'tests/e2e/**'],
+    // `test/integration/**` runs under vitest.integration.config.ts
+    // — node env, real Postgres. Excluded here so `pnpm test` stays a
+    // pure jsdom unit run with no infra dependency.
+    exclude: ['node_modules', '.next', 'dist', 'tests/e2e/**', 'test/integration/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
