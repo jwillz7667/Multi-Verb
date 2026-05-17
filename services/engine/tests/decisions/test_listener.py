@@ -189,11 +189,22 @@ def _registry(*rules: Rule) -> RulesRegistry:
     return RulesRegistry(rules, rules_version="v1.0")
 
 
+@dataclass(slots=True)
+class _RecordingDispatcher:
+    """Stand-in for ExecutionDispatcher — captures every dispatch() call."""
+
+    dispatched: list[tuple[object, object]] = field(default_factory=list)
+
+    def dispatch(self, decision: object, state: object) -> None:
+        self.dispatched.append((decision, state))
+
+
 def _build(
     *,
     rules: RulesRegistry,
     identity_resolver: object = None,
     fail_on_decision_flush: bool = False,
+    executor_dispatcher: _RecordingDispatcher | None = None,
 ) -> tuple[DecisionTickListener, list[_RecordingAction], _FakeSessionFactory, _FakePublisher]:
     actions: list[_RecordingAction] = []
     factory = _FakeSessionFactory(actions=actions, fail_on_decision_flush=fail_on_decision_flush)
@@ -204,6 +215,7 @@ def _build(
         publisher=publisher,  # type: ignore[arg-type]
         rules=rules,
         identity_resolver=resolver,  # type: ignore[arg-type]
+        executor_dispatcher=executor_dispatcher,  # type: ignore[arg-type]
     )
     return listener, actions, factory, publisher
 
@@ -412,3 +424,82 @@ async def test_publish_envelope_carries_full_moderator_decision() -> None:
     assert envelope.payload.decision.triggering_rule == "firing_rule"
     assert envelope.payload.decision.tick_id == 3
     assert envelope.payload.decision.confidence == pytest.approx(0.6)
+
+
+# ---------------------------------------------------------------------------
+# Execution dispatcher gating (P4 L8)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatcherGating:
+    """The dispatcher is wired in P4 L8 only for non-silent auto decisions.
+
+    Researcher commands get their own execution path in a later phase, and
+    silent ticks have nothing to say. Shadow-mode runs (no dispatcher
+    injected) must remain identical to P3 L10.
+    """
+
+    async def test_non_silent_auto_decision_is_dispatched(self) -> None:
+        firing = _StubRule(
+            name="firing_rule",
+            fires_after_tick=0,
+            proposed_action="prompt_participant",
+        )
+        dispatcher = _RecordingDispatcher()
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0))
+
+        assert len(dispatcher.dispatched) == 1
+        dispatched_decision, dispatched_state = dispatcher.dispatched[0]
+        # Decision pulled straight from the resolver; state is the tick input.
+        assert dispatched_decision.action == "prompt_participant"  # type: ignore[attr-defined]
+        assert dispatched_decision.source == "auto"  # type: ignore[attr-defined]
+        assert dispatched_state.tick_id == 0  # type: ignore[attr-defined]
+
+    async def test_stay_silent_is_not_dispatched(self) -> None:
+        # No rule fires → stay_silent default → no audio to render.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        dispatcher = _RecordingDispatcher()
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(quiet),
+            executor_dispatcher=dispatcher,
+        )
+
+        await listener(_state(tick_id=0))
+
+        assert dispatcher.dispatched == []
+
+    async def test_shadow_mode_skips_dispatch_when_unwired(self) -> None:
+        # No dispatcher injected — pre-P4 behaviour: rows persist + SSE
+        # publishes, but no audio path runs.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        listener, actions, _factory, _pub = _build(rules=_registry(firing))
+
+        await listener(_state(tick_id=0))
+
+        # Decision + evals + publish all happen, but no dispatch can be
+        # observed since we didn't inject one. The persisted row stays
+        # `was_executed=False`, which is the shadow-mode invariant.
+        decision_payload = next(a.payload for a in actions if a.kind == "decision_add")
+        assert isinstance(decision_payload, Decision)
+        assert decision_payload.was_executed is False
+
+    async def test_persist_failure_skips_dispatch(self) -> None:
+        # If the DB write blows up the listener raises before reaching
+        # the dispatcher hand-off — no audio for an un-audited decision.
+        firing = _StubRule(name="firing_rule", fires_after_tick=0)
+        dispatcher = _RecordingDispatcher()
+        listener, _actions, _factory, _pub = _build(
+            rules=_registry(firing),
+            fail_on_decision_flush=True,
+            executor_dispatcher=dispatcher,
+        )
+
+        with pytest.raises(RuntimeError, match="simulated DB outage"):
+            await listener(_state(tick_id=0))
+
+        assert dispatcher.dispatched == []

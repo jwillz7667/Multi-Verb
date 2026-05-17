@@ -1,4 +1,4 @@
-"""Decision tick-listener — resolver → persist → publish (Phase 3 L10).
+"""Decision tick-listener — resolver → persist → publish → dispatch (P3 L10 / P4 L8).
 
 Plugged into the tick loop alongside `PersistAndPublishListener`. Each
 tick this listener:
@@ -15,11 +15,15 @@ tick this listener:
      publisher itself.
   4. Updates the cooldown map for the rule that won, so the next tick's
      resolver call sees the fresh `last_won_at`.
+  5. (P4 L8) When an `ExecutionDispatcher` is wired AND the decision is
+     a non-silent auto decision, hands the decision off to the
+     dispatcher — the actual mouth/TTS/publisher run happens in a
+     background task so the tick loop never blocks (brief §6 step 6).
 
-Shadow-mode behaviour (Phase 3): `was_executed` is always False, mouth-
-layer fields stay None. The listener still ships the decision envelope
-so the dashboard's decision log / "Why quiet now?" panel renders the
-silent-decision stream during the shadow review.
+Shadow-mode behaviour (Phase 3): when no dispatcher is wired, the
+listener is identical to its P3 L10 form — every decision lands as
+`was_executed=False`. The dashboard's decision log / "Why quiet now?"
+panel renders the silent-decision stream during the shadow review.
 
 Cooldown state is *in-process*. A worker restart resets cooldowns; the
 brief explicitly accepts this because mid-session restarts only happen
@@ -56,6 +60,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from verbio_engine.decisions.dispatcher import ExecutionDispatcher
     from verbio_engine.domain.session_state import SessionState
     from verbio_engine.realtime import EventPublisher
     from verbio_engine.rules import RulesRegistry
@@ -80,6 +85,7 @@ class DecisionTickListener:
 
     __slots__ = (
         "_cooldowns",
+        "_executor_dispatcher",
         "_identity_resolver",
         "_publisher",
         "_rules",
@@ -93,6 +99,7 @@ class DecisionTickListener:
         publisher: EventPublisher,
         rules: RulesRegistry,
         identity_resolver: IdentityResolver,
+        executor_dispatcher: ExecutionDispatcher | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -102,6 +109,10 @@ class DecisionTickListener:
         # the rule last *won* on. The resolver consumes this read-only;
         # we mutate it after the winner is known.
         self._cooldowns: dict[str, datetime] = {}
+        # Optional execution path. When wired, non-silent auto decisions
+        # are handed to the dispatcher after persist+publish; the tick
+        # loop continues immediately (brief §6 step 6).
+        self._executor_dispatcher = executor_dispatcher
 
     async def __call__(self, state: SessionState) -> None:
         output = resolve(
@@ -173,6 +184,16 @@ class DecisionTickListener:
         # spoke — symmetric with the "no audit row" outcome.
         if decision.triggering_rule is not None:
             self._cooldowns[decision.triggering_rule] = state.t
+
+        # P4 L8: hand non-silent auto decisions to the execution
+        # dispatcher. Researcher-sourced decisions get their own path
+        # in Phase 5; for now the gate is auto + non-silent.
+        if (
+            self._executor_dispatcher is not None
+            and decision.action != "stay_silent"
+            and decision.source == "auto"
+        ):
+            self._executor_dispatcher.dispatch(decision, state)
 
     def _resolve_target(self, identity: str | None) -> uuid.UUID | None:
         """LiveKit identity (str) → DB participant UUID, or None if unknown."""

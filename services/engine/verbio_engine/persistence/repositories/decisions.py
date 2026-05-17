@@ -1,4 +1,4 @@
-"""Decision repository — one insert per tick (Phase 3 L9).
+"""Decision repository — insert + execution-metadata update (P3 L9 / P4 L8).
 
 Every tick of the engine produces exactly one `ModeratorDecision`
 (silent or spoken); the resolver hands it off and the tick-loop wiring
@@ -8,6 +8,9 @@ must never leave a spoken utterance with no decision record.
 
 API:
   - `insert(record)` : persist one decision; returns the row with its id.
+  - `update_execution(...)` : (P4 L8) write `was_executed`, `llm_output`,
+    `spoken_at`, and append codes to `suppressed_by` once the dispatcher
+    has finished running the mouth/TTS/publisher pipeline.
 
 No `insert_many` here: decisions arrive serially from a per-session
 tick loop, one every 500ms. Bulk import for replay tooling can grow
@@ -104,5 +107,35 @@ class DecisionRepo:
             cooldown_until=record.cooldown_until,
         )
         self._session.add(row)
+        await self._session.flush([row])
+        return row
+
+    async def update_execution(
+        self,
+        *,
+        decision_id: uuid.UUID,
+        was_executed: bool,
+        llm_output: str | None,
+        spoken_at: datetime | None,
+        additional_suppressed: list[str],
+    ) -> Decision | None:
+        """Apply the dispatcher's `ExecutionOutcome` to an existing row.
+
+        `additional_suppressed` is *appended* to whatever the resolver
+        already wrote (cooldown / quietness_budget / lower_priority_won).
+        Returns the updated row, or None if the decision_id is unknown
+        — defensive: the orchestrator runs in a background task that
+        could theoretically outlive a session teardown that purged the
+        row. Silent skip beats raising into an `asyncio.Task` that
+        nobody is awaiting.
+        """
+        row = await self._session.get(Decision, decision_id)
+        if row is None:
+            return None
+        row.was_executed = was_executed
+        row.llm_output = llm_output
+        row.spoken_at = spoken_at
+        if additional_suppressed:
+            row.suppressed_by = [*list(row.suppressed_by), *additional_suppressed]
         await self._session.flush([row])
         return row

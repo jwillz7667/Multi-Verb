@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from verbio_engine.decisions import DecisionTickListener
+from verbio_engine.decisions import DecisionTickListener, ExecutionDispatcher
 from verbio_engine.domain.rules_config import RulesConfig
 from verbio_engine.domain.study import SessionConfigSnapshot
 from verbio_engine.embeddings import EmbeddingCoordinator
@@ -148,6 +148,7 @@ class SessionRuntime:
         embedding_rolling_window_sec: float = 30.0,
         rules_registry: RulesRegistry | None = None,
         rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = None,
+        executor_dispatcher: ExecutionDispatcher | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._room_name = room_name
@@ -165,6 +166,14 @@ class SessionRuntime:
         self._rules_registry_factory: Callable[[RulesConfig], RulesRegistry] | None = (
             rules_registry_factory
         )
+        # Phase 4 L8: optional mouth/TTS/publisher pipeline. When wired,
+        # `DecisionTickListener` hands every non-silent auto decision to
+        # the dispatcher, which spawns the executor as a background task
+        # so the tick loop stays unblocked (brief §6 step 6). Worker code
+        # wires this once the LiveKit room is up and the audio publisher
+        # has joined the moderator track. Leaving it None keeps the
+        # session in shadow mode — decisions persist but no audio plays.
+        self._executor_dispatcher: ExecutionDispatcher | None = executor_dispatcher
         # Optional embedding pipeline (Phase 3 L7). When `provider` is
         # None the runtime simply doesn't embed anything — topic_drift
         # will read `None` for both vectors and stay silent. The
@@ -519,6 +528,7 @@ class SessionRuntime:
                 publisher=self._publisher,
                 rules=self._rules_registry,
                 identity_resolver=self._identity_to_db_uuid,
+                executor_dispatcher=self._executor_dispatcher,
             )
         listener = _compose_tick_listeners(snapshot_listener, decision_listener)
         self._tick_loop = TickLoop(
@@ -619,6 +629,14 @@ class SessionRuntime:
             if self._embedding_coordinator is not None:
                 await self._embedding_coordinator.aclose(timeout=timeout)
                 self._embedding_coordinator = None
+            # P4 L8: drain any in-flight executor tasks before returning.
+            # The tick loop is already stopped, so no NEW dispatches will
+            # land, but a slow mouth/TTS pipeline may still be writing to
+            # the decisions row when the worker calls us — finish those
+            # writes before the session_factory is torn down or we leak
+            # `was_executed=False` rows for utterances that did play.
+            if self._executor_dispatcher is not None:
+                await self._executor_dispatcher.aclose()
 
     def _record_state_event(self, event: StateEvent) -> None:
         """Forward a state event to the store, if the tick loop is running."""
