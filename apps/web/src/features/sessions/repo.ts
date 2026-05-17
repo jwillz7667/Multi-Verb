@@ -806,6 +806,65 @@ export async function* iterateAllUtterancesForSession(
 }
 
 /**
+ * Stream every decision for a session into an async iterator.
+ *
+ * The decision CSV export needs all rows including the dense shadow-
+ * mode `stay_silent` track — a 60-min session at 2 Hz produces ≈ 7200
+ * decisions. Cursor pagination over `(ts, id)` keeps memory bounded
+ * to one chunk at a time while preserving deterministic ordering.
+ */
+export async function* iterateAllDecisionsForSession(
+  sessionId: string,
+  chunkSize = 2_000,
+): AsyncGenerator<DecisionRow[], void, void> {
+  let cursorTs: Date | undefined;
+  let cursorId: string | undefined;
+  let hasMore = true;
+  while (hasMore) {
+    const rows = await db.decision.findMany({
+      where: {
+        sessionId,
+        ...(cursorTs !== undefined && cursorId !== undefined
+          ? {
+              OR: [{ ts: { gt: cursorTs } }, { ts: cursorTs, id: { gt: cursorId } }],
+            }
+          : {}),
+      },
+      orderBy: [{ ts: 'asc' }, { id: 'asc' }],
+      take: chunkSize,
+    });
+    if (rows.length === 0) return;
+    yield rows.map((row) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      tickId: row.tickId,
+      ts: row.ts,
+      action: row.action,
+      targetParticipantId: row.targetParticipantId,
+      source: row.source,
+      triggeringRule: row.triggeringRule,
+      researcherId: row.researcherId,
+      researcherHint: row.researcherHint,
+      reasonCodes: row.reasonCodes,
+      reasonHuman: row.reasonHuman,
+      confidence: row.confidence,
+      suppressedBy: row.suppressedBy,
+      wasExecuted: row.wasExecuted,
+      llmPrompt: row.llmPrompt as Record<string, unknown> | null,
+      llmOutput: row.llmOutput,
+      ttsAudioUrl: row.ttsAudioUrl,
+      spokenAt: row.spokenAt,
+      cooldownUntil: row.cooldownUntil,
+    }));
+    const last = rows[rows.length - 1];
+    if (last === undefined) return;
+    cursorTs = last.ts;
+    cursorId = last.id;
+    hasMore = rows.length === chunkSize;
+  }
+}
+
+/**
  * Fetch only decisions that actually went through the mouth — i.e.,
  * the moderator's spoken turns. The brief persists every tick (≈ 7200
  * rows per hour at 2 Hz) but the transcript export only wants the few

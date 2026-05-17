@@ -48,9 +48,8 @@ export function ReplayExports({ sessionId }: Props): React.ReactElement {
     },
     {
       label: 'Decision log (.csv)',
-      href: null,
+      href: `/api/sessions/${sessionId}/exports/decisions`,
       testid: 'replay-export-decisions',
-      pendingHint: 'P6 L11',
     },
     {
       label: 'State snapshots (.jsonl)',

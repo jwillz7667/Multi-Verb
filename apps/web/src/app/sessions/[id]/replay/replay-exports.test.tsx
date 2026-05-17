@@ -42,21 +42,27 @@ describe('<ReplayExports />', () => {
     expect(link).toHaveTextContent(/Transcript \(\.vtt\)/);
   });
 
-  it('renders disabled placeholders for the L11–L13 exports with a phase hint', () => {
+  it('exposes the decision-log .csv download with the right href + download attr', () => {
     render(<ReplayExports sessionId="sess-abc" />);
 
-    const decisions = screen.getByTestId('replay-export-decisions');
-    expect(decisions.tagName).toBe('BUTTON');
-    expect(decisions).toBeDisabled();
-    expect(decisions).toHaveTextContent(/Decision log \(\.csv\)/);
-    expect(decisions).toHaveTextContent(/P6 L11/);
+    const link = screen.getByTestId('replay-export-decisions');
+    expect(link.tagName).toBe('A');
+    expect(link).toHaveAttribute('href', '/api/sessions/sess-abc/exports/decisions');
+    expect(link).toHaveAttribute('download', '');
+    expect(link).toHaveTextContent(/Decision log \(\.csv\)/);
+  });
+
+  it('renders disabled placeholders for the L12–L13 exports with a phase hint', () => {
+    render(<ReplayExports sessionId="sess-abc" />);
 
     const snapshots = screen.getByTestId('replay-export-snapshots');
+    expect(snapshots.tagName).toBe('BUTTON');
     expect(snapshots).toBeDisabled();
     expect(snapshots).toHaveTextContent(/State snapshots \(\.jsonl\)/);
     expect(snapshots).toHaveTextContent(/P6 L12/);
 
     const clips = screen.getByTestId('replay-export-clips');
+    expect(clips.tagName).toBe('BUTTON');
     expect(clips).toBeDisabled();
     expect(clips).toHaveTextContent(/Flagged clips \(\.mp3\)/);
     expect(clips).toHaveTextContent(/P6 L13/);

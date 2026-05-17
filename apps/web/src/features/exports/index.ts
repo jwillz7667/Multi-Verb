@@ -8,3 +8,10 @@
 
 export { buildTranscriptLines, formatTranscriptTxt, formatTranscriptVtt } from './transcript';
 export type { TranscriptHeader, TranscriptLine } from './transcript';
+export {
+  DECISION_LOG_COLUMNS,
+  formatDecisionLogCsv,
+  formatDecisionLogHeader,
+  formatDecisionLogRow,
+} from './decision-log';
+export type { DecisionLogColumn } from './decision-log';

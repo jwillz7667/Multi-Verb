@@ -20,6 +20,7 @@ export {
   findSessionById,
   findSessionForReplay,
   findSnapshotAtOrBefore,
+  iterateAllDecisionsForSession,
   iterateAllUtterancesForSession,
   listDecisionsByRange,
   listDecisionsSince,
