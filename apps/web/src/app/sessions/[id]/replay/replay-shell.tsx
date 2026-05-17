@@ -32,6 +32,7 @@ import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ReplayAudioPlayer } from './replay-audio-player';
+import { ReplayDecisionDetail } from './replay-decision-detail';
 import { ReplayStateSnapshot } from './replay-state-snapshot';
 import { ReplayTimeline } from './replay-timeline';
 
@@ -199,27 +200,16 @@ export function ReplayShell({ bootstrap }: Props): React.ReactElement {
             L8 — decision detail panel. Renders the selected decision's
             reason codes, every rule evaluation (firing + suppressed
             with reason), and the LLM prompt + output. Click handlers
-            on the timeline markers and the audio scrubber update
-            `selectedDecisionId`.
+            on the timeline markers update `selectedDecisionId`; the
+            panel fetches evaluations on demand from
+            /api/sessions/[id]/decisions/[decisionId]/evaluations.
           */}
-          <section
-            className="border-border-default bg-surface-primary flex min-h-[20rem] flex-col gap-2 rounded-lg border p-6"
-            data-testid="replay-decision-slot"
-          >
-            <h2 className="text-text-primary text-sm font-medium uppercase tracking-wide">
-              Decision detail
-            </h2>
-            {selectedDecisionId === null ? (
-              <p className="text-text-secondary mt-2 text-sm">
-                Select a marker on the timeline to inspect a decision.
-              </p>
-            ) : (
-              <p className="text-text-tertiary font-mono text-xs">selected: {selectedDecisionId}</p>
-            )}
-            <p className="text-text-tertiary mt-4 text-xs">
-              Full rule-evaluation breakdown + LLM prompt/output ship in P6 L8.
-            </p>
-          </section>
+          <ReplayDecisionDetail
+            sessionId={session.id}
+            decisions={decisions}
+            participants={participants}
+            selectedDecisionId={selectedDecisionId}
+          />
         </div>
 
         {/*
