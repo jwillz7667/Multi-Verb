@@ -31,6 +31,11 @@ from verbio_engine.commands.control import (
     RuntimeControl,
     apply_control_commands,
 )
+from verbio_engine.commands.flags import (
+    FLAG_COMMAND_TYPES,
+    FlagEffects,
+    apply_flag_commands,
+)
 from verbio_engine.commands.translator import (
     MANUAL_COOLDOWN_SEC,
     OVERRIDING_COMMAND_TYPES,
@@ -45,6 +50,7 @@ from verbio_engine.commands.translator import (
 __all__ = [
     "BUDGET_COMMAND_TYPES",
     "CONTROL_COMMAND_TYPES",
+    "FLAG_COMMAND_TYPES",
     "MANUAL_COOLDOWN_SEC",
     "OVERRIDING_COMMAND_TYPES",
     "SPOKEN_COMMAND_TYPES",
@@ -53,11 +59,13 @@ __all__ = [
     "BudgetEffects",
     "CommandBus",
     "ControlEffects",
+    "FlagEffects",
     "NullCommandBus",
     "RedisCommandStreamBus",
     "RuntimeControl",
     "apply_budget_commands",
     "apply_control_commands",
+    "apply_flag_commands",
     "build_manual_decision",
     "build_whisper_decision",
     "commands_stream_key",

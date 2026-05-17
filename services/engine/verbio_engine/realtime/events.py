@@ -9,6 +9,7 @@ Variants today:
   - `utterance`      (Phase 1): one STT segment
   - `state_snapshot` (Phase 2 L3): full SessionState frozen at one tick
   - `decision`       (Phase 3 L10): rule-driven moderator decision
+  - `session_flag`   (Phase 5 L7): replay-bookmark for a moment
 
 `TranscriptEvent` is a discriminated union built from the per-variant
 envelope classes; consumers should construct via the typed envelope
@@ -181,22 +182,77 @@ class DecisionEventEnvelope(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Session-flag variant (Phase 5 L7)
+# ---------------------------------------------------------------------------
+
+
+class SessionFlagEventPayload(BaseModel):
+    """Snapshot of one session_flag row at the moment it was persisted.
+
+    Carries the bookmark fields the dashboard's flag rail renders
+    inline — `note` is shown alongside the timestamp; `researcher_id`
+    distinguishes flags from different researchers in a multi-observer
+    session; `auto_generated` lets the UI render engine-detected vs.
+    human-issued bookmarks differently (future, P5 L7 only writes
+    researcher-issued).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    flag_id: uuid.UUID
+    session_id: uuid.UUID
+    ts: datetime
+    researcher_id: uuid.UUID | None
+    note: str | None
+    auto_generated: bool
+
+
+class SessionFlagEventEnvelope(BaseModel):
+    """SSE envelope for one session-flag bookmark.
+
+    `id` mirrors the `session_flags.id` UUID as a string — which is the
+    `command_id` for researcher-issued flags, so a client that already
+    saw the `researcher_action` SSE for the same `flag_moment` can
+    deduplicate against the audit message it already rendered.
+
+    `ts` is the bookmark's wall-clock (the researcher's click time),
+    matching `payload.ts` — clients order the flag rail by `ts` without
+    unwrapping the payload.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["session_flag"]
+    id: str = Field(min_length=1)
+    session_id: uuid.UUID
+    ts: datetime
+    payload: SessionFlagEventPayload
+
+
+# ---------------------------------------------------------------------------
 # Union + validation entry-point
 # ---------------------------------------------------------------------------
 
 
 TranscriptEvent = Annotated[
-    UtteranceEventEnvelope | StateSnapshotEventEnvelope | DecisionEventEnvelope,
+    UtteranceEventEnvelope
+    | StateSnapshotEventEnvelope
+    | DecisionEventEnvelope
+    | SessionFlagEventEnvelope,
     Field(discriminator="type"),
 ]
 """Discriminated union over every per-session SSE envelope variant.
 
-Phase 3 L10 adds the `decision` variant; the discriminator pattern
-keeps that change additive on the web side."""
+Phase 3 L10 adds the `decision` variant; Phase 5 L7 adds the
+`session_flag` variant. The discriminator pattern keeps each addition
+additive on the web side."""
 
 
 TranscriptEventAdapter: TypeAdapter[
-    UtteranceEventEnvelope | StateSnapshotEventEnvelope | DecisionEventEnvelope
+    UtteranceEventEnvelope
+    | StateSnapshotEventEnvelope
+    | DecisionEventEnvelope
+    | SessionFlagEventEnvelope
 ] = TypeAdapter(TranscriptEvent)
 """Single entry-point for validation, JSON Schema export, and bulk dump.
 
@@ -265,6 +321,38 @@ def decision_event(*, decision: ModeratorDecision) -> DecisionEventEnvelope:
     )
 
 
+def session_flag_event(
+    *,
+    flag_id: uuid.UUID,
+    session_id: uuid.UUID,
+    ts: datetime,
+    researcher_id: uuid.UUID | None,
+    note: str | None,
+    auto_generated: bool,
+) -> SessionFlagEventEnvelope:
+    """Build a `SessionFlagEventEnvelope` for a freshly-persisted flag.
+
+    `flag_id` is the `session_flags.id` UUID — for researcher-issued
+    flags this matches the originating `flag_moment.command_id`, so
+    SSE clients can deduplicate this envelope against any prior
+    researcher_action surface for the same command.
+    """
+    return SessionFlagEventEnvelope(
+        type="session_flag",
+        id=str(flag_id),
+        session_id=session_id,
+        ts=ts,
+        payload=SessionFlagEventPayload(
+            flag_id=flag_id,
+            session_id=session_id,
+            ts=ts,
+            researcher_id=researcher_id,
+            note=note,
+            auto_generated=auto_generated,
+        ),
+    )
+
+
 def state_snapshot_event(
     *,
     snapshot_id: uuid.UUID,
@@ -295,6 +383,8 @@ __all__ = [
     "DecisionEventEnvelope",
     "DecisionEventPayload",
     "NonNegativeInt",
+    "SessionFlagEventEnvelope",
+    "SessionFlagEventPayload",
     "StateSnapshotEventEnvelope",
     "StateSnapshotEventPayload",
     "TranscriptEvent",
@@ -303,6 +393,7 @@ __all__ = [
     "UtteranceEventPayload",
     "channel_for",
     "decision_event",
+    "session_flag_event",
     "state_snapshot_event",
     "utterance_event",
 ]

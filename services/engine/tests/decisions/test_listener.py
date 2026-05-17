@@ -27,8 +27,13 @@ import pytest
 from verbio_engine.decisions import DecisionTickListener
 from verbio_engine.domain import ParticipantState, QuietnessBudget, SessionState
 from verbio_engine.domain.command import ResearcherCommand
-from verbio_engine.persistence import Decision, ResearcherAction, RuleEvaluation
-from verbio_engine.realtime import DecisionEventEnvelope
+from verbio_engine.persistence import (
+    Decision,
+    ResearcherAction,
+    RuleEvaluation,
+    SessionFlag,
+)
+from verbio_engine.realtime import DecisionEventEnvelope, SessionFlagEventEnvelope
 from verbio_engine.rules import RulePredicateResult, RulesRegistry
 
 if TYPE_CHECKING:
@@ -47,8 +52,8 @@ class _RecordingAction:
     """One observable event during a listener invocation.
 
     Kinds observed: "decision_add", "researcher_action_add",
-    "researcher_action_fk_update" (P5 L3 FK stamping), "evals_add",
-    "flush", "publish".
+    "researcher_action_fk_update" (P5 L3 FK stamping), "session_flag_add"
+    (P5 L7 bookmark write), "evals_add", "flush", "publish".
     """
 
     kind: str
@@ -87,6 +92,8 @@ class _FakeAsyncSession:
             self.actions.append(_RecordingAction("decision_add", instance))
         elif isinstance(instance, ResearcherAction):
             self.actions.append(_RecordingAction("researcher_action_add", instance))
+        elif isinstance(instance, SessionFlag):
+            self.actions.append(_RecordingAction("session_flag_add", instance))
         else:
             self.actions.append(_RecordingAction("other_add", instance))
 
@@ -650,8 +657,10 @@ class TestCommandDrain:
 
         await listener(_state(tick_id=0))
 
-        # First session opens for command persistence, second for the decision tx.
-        assert len(factory.spawned) == 2
+        # Three sessions open: audit (researcher_actions), P5 L7
+        # session_flags tx (the batch carries a flag_moment), and the
+        # decision tx. A batch without a flag_moment opens only two.
+        assert len(factory.spawned) == 3
         persisted = [a.payload for a in actions if a.kind == "researcher_action_add"]
         assert len(persisted) == 2
         assert all(isinstance(p, ResearcherAction) for p in persisted)
@@ -687,13 +696,23 @@ class TestCommandDrain:
         row = persisted[0]
         assert isinstance(row, ResearcherAction)
         assert row.id == good.command_id
+        # P5 L7: bookmark must mirror the audit-row drop policy — the
+        # bad row never landed, so no `session_flags` row for it either.
+        # The good row gets exactly one bookmark.
+        flag_rows = [a.payload for a in actions if a.kind == "session_flag_add"]
+        assert len(flag_rows) == 1
+        flag_row = flag_rows[0]
+        assert isinstance(flag_row, SessionFlag)
+        assert flag_row.id == good.command_id
 
     async def test_drain_runs_before_rule_resolution(self) -> None:
         """The bus must be drained before the rules path opens its DB tx.
 
         This matters for §6 step 2 — if a tick later short-circuits (e.g.
         the rules path raises), the audit row for the command still landed
-        first.
+        first. P5 L7 adds a third tx for the `session_flags` bookmark
+        projection — it sits between audit and decision so an aborted
+        decision tx leaves the audit row AND the bookmark behind.
         """
         firing = _StubRule(name="firing_rule", fires_after_tick=0)
         cmd = _researcher_command(
@@ -706,12 +725,155 @@ class TestCommandDrain:
 
         await listener(_state(tick_id=0))
 
-        # Order of session opens: commands first, then the decision tx.
+        # Order: audit row → session_flags row → decision row.
         kinds = [a.kind for a in actions]
         researcher_idx = kinds.index("researcher_action_add")
+        flag_idx = kinds.index("session_flag_add")
         decision_idx = kinds.index("decision_add")
-        assert researcher_idx < decision_idx
+        assert researcher_idx < flag_idx < decision_idx
+        assert len(factory.spawned) == 3
+
+
+# ---------------------------------------------------------------------------
+# Flag-moment projection (P5 L7)
+# ---------------------------------------------------------------------------
+
+
+class TestFlagMomentProjection:
+    """`flag_moment` projects to `session_flags` + publishes SSE per row.
+
+    The audit row in `researcher_actions` is the load-bearing record of
+    researcher intent (covered by `TestCommandDrain`); this class focuses
+    on the projection side: the bookmark row and the live SSE envelope
+    the dashboard's flag rail consumes.
+    """
+
+    async def test_flag_moment_publishes_session_flag_event(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "important moment"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        # Exactly one bookmark row landed.
+        flag_rows = [a.payload for a in actions if a.kind == "session_flag_add"]
+        assert len(flag_rows) == 1
+        row = flag_rows[0]
+        assert isinstance(row, SessionFlag)
+        # Row PK = command_id (idempotency anchor across restart re-drains).
+        assert row.id == cmd.command_id
+        assert row.session_id == cmd.session_id
+        assert row.ts == cmd.issued_at
+        assert row.researcher_id == uuid.UUID(cmd.researcher_id)
+        assert row.note == "important moment"
+        # Researcher-issued — never auto.
+        assert row.auto_generated is False
+
+        # SSE envelope for the bookmark must be published in addition
+        # to the per-tick decision envelope. The flag envelope's `id`
+        # mirrors `session_flags.id` so the dashboard can dedup against
+        # an earlier researcher-action surface for the same command.
+        published = [a.payload for a in actions if a.kind == "publish"]
+        flag_envelopes = [p for p in published if isinstance(p, SessionFlagEventEnvelope)]
+        assert len(flag_envelopes) == 1
+        envelope = flag_envelopes[0]
+        assert envelope.type == "session_flag"
+        assert envelope.id == str(cmd.command_id)
+        assert envelope.session_id == cmd.session_id
+        assert envelope.payload.flag_id == cmd.command_id
+        assert envelope.payload.note == "important moment"
+        assert envelope.payload.auto_generated is False
+
+    async def test_flag_publish_runs_before_decision_publish(self) -> None:
+        # Audit-first ordering applies to wire fan-out too: the
+        # bookmark row+SSE pair runs as a unit before the resolver +
+        # decision tx + decision SSE. A crash after the bookmark
+        # publish still produces a coherent dashboard state — flag
+        # rail shows the bookmark; decision log later catches up via
+        # the next tick or backfill.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "k"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        publishes = [a.payload for a in actions if a.kind == "publish"]
+        kinds_in_order = [type(p).__name__ for p in publishes]
+        # Both envelope types must appear once.
+        assert kinds_in_order.count("DecisionEventEnvelope") == 1
+        assert kinds_in_order.count("SessionFlagEventEnvelope") == 1
+        # Flag fires first (its persist+publish happens before the
+        # decision flow opens its tx); decision follows.
+        assert kinds_in_order.index("SessionFlagEventEnvelope") < kinds_in_order.index(
+            "DecisionEventEnvelope",
+        )
+
+    async def test_two_flags_in_batch_emit_two_rows_and_two_envelopes(self) -> None:
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        first = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "first"},
+        )
+        second = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="flag_moment",
+            payload={"note": "second"},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[first, second]]})
+        listener, actions, _factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        flag_rows = [a.payload for a in actions if a.kind == "session_flag_add"]
+        assert [r.id for r in flag_rows if isinstance(r, SessionFlag)] == [
+            first.command_id,
+            second.command_id,
+        ]
+        flag_envelopes = [
+            p
+            for p in (a.payload for a in actions if a.kind == "publish")
+            if isinstance(p, SessionFlagEventEnvelope)
+        ]
+        assert [e.id for e in flag_envelopes] == [
+            str(first.command_id),
+            str(second.command_id),
+        ]
+
+    async def test_batch_without_flag_moment_opens_no_flag_tx(self) -> None:
+        # If the batch carries no flag_moment, `_persist_flags` must
+        # short-circuit before opening a session — opening an empty tx
+        # would burn a Postgres connection for nothing on a hot tick.
+        quiet = _StubRule(name="quiet", fires_after_tick=999)
+        cmd = _researcher_command(
+            session_id=SESSION_ID,
+            command_type="set_quietness_budget",
+            payload={"max_utterances_per_10min": 4},
+        )
+        bus = _FakeCommandBus(queues={SESSION_ID: [[cmd]]})
+        listener, actions, factory, _pub = _build(rules=_registry(quiet), command_bus=bus)
+
+        await listener(_state(tick_id=0))
+
+        # Two sessions: audit + decision. No bookmark tx.
         assert len(factory.spawned) == 2
+        assert all(a.kind != "session_flag_add" for a in actions)
+        flag_envelopes = [
+            p
+            for p in (a.payload for a in actions if a.kind == "publish")
+            if isinstance(p, SessionFlagEventEnvelope)
+        ]
+        assert flag_envelopes == []
 
 
 # ---------------------------------------------------------------------------

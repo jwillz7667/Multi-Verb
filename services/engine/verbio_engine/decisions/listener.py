@@ -2,7 +2,8 @@
 
 Phase touchpoints: P3 L10 (resolver wired), P4 L8 (executor dispatch),
 P5 L2 (drain commands → audit rows), P5 L3 (manual override path),
-P5 L4 (whisper override path), P5 L5 (non-spoken control plane).
+P5 L4 (whisper override path), P5 L5 (non-spoken control plane),
+P5 L6 (live quietness-budget patches), P5 L7 (researcher flag bookmarks).
 
 Plugged into the tick loop alongside `PersistAndPublishListener`. Each
 tick this listener:
@@ -97,6 +98,7 @@ from verbio_engine.commands import (
     ControlEffects,
     apply_budget_commands,
     apply_control_commands,
+    apply_flag_commands,
     build_manual_decision,
     build_whisper_decision,
     first_overriding_command,
@@ -109,8 +111,9 @@ from verbio_engine.persistence import (
     ResearcherActionRepo,
     RuleEvaluationInsert,
     RuleEvaluationRepo,
+    SessionFlagRepo,
 )
-from verbio_engine.realtime import decision_event
+from verbio_engine.realtime import decision_event, session_flag_event
 from verbio_engine.rules import resolve
 
 if TYPE_CHECKING:
@@ -204,21 +207,22 @@ class DecisionTickListener:
         # PLR0912/PLR0915: this method is the brief's §6 tick pipeline
         # written top-to-bottom. Splitting it into helpers would scatter
         # the order across the file without reducing total complexity —
-        # the order itself (audit → control → budget → resolve →
+        # the order itself (audit → control → budget → flag → resolve →
         # override → gate → persist → publish → dispatch) is the
         # contract.
         # P5 L2/L3/L4/L5: drain researcher commands at the top of the
         # tick so the audit row exists even if a later step in this
         # tick fails. Override commands (force_*, whisper) replace the
         # resolver's decision below; control commands (mute/pause/end)
-        # mutate the runtime via `apply_control_commands`; the
-        # remaining types (set_quietness_budget, flag_moment) ride
-        # along as audit rows only — their semantics land in L6 / L7.
+        # mutate the runtime via `apply_control_commands`;
+        # `set_quietness_budget` patches the runtime budget (L6);
+        # `flag_moment` projects to `session_flags` + SSE (L7).
         commands: list[ResearcherCommand] = []
+        researcher_id_for: dict[str, uuid.UUID] = {}
         if self._command_bus is not None:
             commands = await self._command_bus.drain(state.session_id)
             if commands:
-                await self._persist_commands(commands)
+                researcher_id_for = await self._persist_commands(commands)
 
         # P5 L5: apply non-spoken control commands. Effects land on the
         # live runtime; we also compute the post-batch effective state
@@ -280,6 +284,17 @@ class DecisionTickListener:
                 )
         else:
             budget_effects = BudgetEffects(budget_after=state.quietness_budget)
+
+        # P5 L7: project any `flag_moment` commands into `session_flags`
+        # rows + live SSE. Audit-first — done before the resolver so a
+        # decision-tx abort can't strand the bookmark. Persistence is
+        # resilient (its own try/except tx) so a Postgres hiccup on the
+        # bookmark write logs but doesn't poison the tick.
+        if commands:
+            await self._persist_flags(
+                commands=commands,
+                researcher_id_for=researcher_id_for,
+            )
 
         override = first_overriding_command(commands)
 
@@ -446,7 +461,10 @@ class DecisionTickListener:
             )
         return pid
 
-    async def _persist_commands(self, commands: list[ResearcherCommand]) -> None:
+    async def _persist_commands(
+        self,
+        commands: list[ResearcherCommand],
+    ) -> dict[str, uuid.UUID]:
         """Write each drained command to `researcher_actions` (audit-first).
 
         One transaction for the whole batch — a batch is typically 0-3
@@ -466,19 +484,35 @@ class DecisionTickListener:
         the audit write. A follow-up tick will re-drain and the
         idempotency check on the next attempt will avoid a duplicate
         row when Postgres recovers.
+
+        Returns:
+            Map of wire-shape `researcher_id` (str) → parsed UUID, one
+            entry per command whose researcher_id parsed cleanly. The
+            P5 L7 flag walker consumes this map so the parse runs once
+            for the batch and a malformed id drops the bookmark row
+            with the same silence as the audit row.
         """
         records: list[ResearcherActionInsert] = []
+        researcher_id_for: dict[str, uuid.UUID] = {}
         for cmd in commands:
-            try:
-                researcher_uuid = uuid.UUID(cmd.researcher_id)
-            except ValueError:
-                log.warning(
-                    "commands.invalid_researcher_id",
-                    session_id=str(cmd.session_id),
-                    command_id=str(cmd.command_id),
-                    researcher_id=cmd.researcher_id,
-                )
-                continue
+            if cmd.researcher_id in researcher_id_for:
+                # Same researcher issued multiple commands in this
+                # batch (common — the dashboard fires several controls
+                # from one click). Reuse the parsed UUID and skip the
+                # extra UUID() construction.
+                researcher_uuid = researcher_id_for[cmd.researcher_id]
+            else:
+                try:
+                    researcher_uuid = uuid.UUID(cmd.researcher_id)
+                except ValueError:
+                    log.warning(
+                        "commands.invalid_researcher_id",
+                        session_id=str(cmd.session_id),
+                        command_id=str(cmd.command_id),
+                        researcher_id=cmd.researcher_id,
+                    )
+                    continue
+                researcher_id_for[cmd.researcher_id] = researcher_uuid
             records.append(
                 ResearcherActionInsert(
                     command_id=cmd.command_id,
@@ -493,7 +527,7 @@ class DecisionTickListener:
                 ),
             )
         if not records:
-            return
+            return researcher_id_for
 
         try:
             async with self._session_factory() as db, db.begin():
@@ -505,6 +539,70 @@ class DecisionTickListener:
                 "commands.persist_failed",
                 count=len(records),
                 error=str(exc),
+            )
+        return researcher_id_for
+
+    async def _persist_flags(
+        self,
+        *,
+        commands: list[ResearcherCommand],
+        researcher_id_for: dict[str, uuid.UUID],
+    ) -> None:
+        """Walk flag_moment commands → `session_flags` rows + SSE per row.
+
+        Owns its own short tx so a Postgres hiccup on the bookmark
+        projection logs and continues without poisoning the decision
+        write that runs later in the tick. The repo is idempotent on
+        `id` (= `command_id`), so a re-drain after restart re-walks the
+        batch and the second attempt collapses to no-op rows that still
+        re-publish SSE (the dashboard de-duplicates on `id`).
+
+        Publish order: per row, persist FIRST, then publish the SSE
+        envelope. If the publish dies, the durable row is the truth;
+        the next reconnect's Postgres backfill replays the bookmark.
+        Symmetric with the decision-event publish below.
+        """
+        flag_effects = apply_flag_commands(
+            commands=commands,
+            researcher_id_for=researcher_id_for,
+        )
+        if not flag_effects.applied:
+            return
+
+        log.info(
+            "decisions.flag_commands_applied",
+            session_id=str(commands[0].session_id),
+            applied_count=flag_effects.applied_count,
+            counts=dict(flag_effects.counts),
+        )
+
+        try:
+            async with self._session_factory() as db, db.begin():
+                repo = SessionFlagRepo(db)
+                for record in flag_effects.records:
+                    await repo.insert(record)
+        except Exception as exc:
+            log.exception(
+                "commands.flag_persist_failed",
+                count=len(flag_effects.records),
+                error=str(exc),
+            )
+            # Don't publish SSE if persistence failed — the dashboard
+            # would render a flag pin with no row behind it. The next
+            # tick will re-drain, re-walk, and the idempotent repo
+            # will recover when Postgres does.
+            return
+
+        for record in flag_effects.records:
+            await self._publisher.publish(
+                session_flag_event(
+                    flag_id=record.id,
+                    session_id=record.session_id,
+                    ts=record.ts,
+                    researcher_id=record.researcher_id,
+                    note=record.note,
+                    auto_generated=record.auto_generated,
+                ),
             )
 
 

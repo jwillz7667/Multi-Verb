@@ -15,6 +15,8 @@ Public surface:
   - `RuleEvaluation`        : rule_evaluations table model (P3 L9)
   - `ResearcherAction`      : researcher_actions table model (P5 L1)
   - `SessionFlag`           : session_flags table model (P5 L1)
+  - `SessionFlagRepo`       : write API for session flags (P5 L7)
+  - `SessionFlagInsert`     : input record for session-flag insert
   - `create_engine`         : async engine factory
   - `session_factory`       : async sessionmaker factory
   - `SessionRepo`           : lifecycle API for sessions
@@ -70,6 +72,10 @@ from verbio_engine.persistence.repositories.rule_evaluations import (
     RuleEvaluationInsert,
     RuleEvaluationRepo,
 )
+from verbio_engine.persistence.repositories.session_flags import (
+    SessionFlagInsert,
+    SessionFlagRepo,
+)
 from verbio_engine.persistence.repositories.sessions import SessionRepo
 from verbio_engine.persistence.repositories.state_snapshots import (
     StateSnapshotInsert,
@@ -100,6 +106,8 @@ __all__ = [
     "RuleEvaluationRepo",
     "Session",
     "SessionFlag",
+    "SessionFlagInsert",
+    "SessionFlagRepo",
     "SessionRepo",
     "StateSnapshot",
     "StateSnapshotInsert",

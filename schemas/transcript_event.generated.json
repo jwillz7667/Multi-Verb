@@ -464,6 +464,102 @@
       "title": "QuietnessBudget",
       "type": "object"
     },
+    "SessionFlagEventEnvelope": {
+      "additionalProperties": false,
+      "description": "SSE envelope for one session-flag bookmark.\n\n`id` mirrors the `session_flags.id` UUID as a string — which is the\n`command_id` for researcher-issued flags, so a client that already\nsaw the `researcher_action` SSE for the same `flag_moment` can\ndeduplicate against the audit message it already rendered.\n\n`ts` is the bookmark's wall-clock (the researcher's click time),\nmatching `payload.ts` — clients order the flag rail by `ts` without\nunwrapping the payload.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/SessionFlagEventPayload"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session_flag",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "session_id",
+        "ts",
+        "payload"
+      ],
+      "title": "SessionFlagEventEnvelope",
+      "type": "object"
+    },
+    "SessionFlagEventPayload": {
+      "additionalProperties": false,
+      "description": "Snapshot of one session_flag row at the moment it was persisted.\n\nCarries the bookmark fields the dashboard's flag rail renders\ninline — `note` is shown alongside the timestamp; `researcher_id`\ndistinguishes flags from different researchers in a multi-observer\nsession; `auto_generated` lets the UI render engine-detected vs.\nhuman-issued bookmarks differently (future, P5 L7 only writes\nresearcher-issued).",
+      "properties": {
+        "auto_generated": {
+          "title": "Auto Generated",
+          "type": "boolean"
+        },
+        "flag_id": {
+          "format": "uuid",
+          "title": "Flag Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Note"
+        },
+        "researcher_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Researcher Id"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flag_id",
+        "session_id",
+        "ts",
+        "researcher_id",
+        "note",
+        "auto_generated"
+      ],
+      "title": "SessionFlagEventPayload",
+      "type": "object"
+    },
     "SessionState": {
       "additionalProperties": false,
       "description": "Per-tick projection of everything a rule needs to read.",
@@ -829,6 +925,7 @@
   "discriminator": {
     "mapping": {
       "decision": "#/$defs/DecisionEventEnvelope",
+      "session_flag": "#/$defs/SessionFlagEventEnvelope",
       "state_snapshot": "#/$defs/StateSnapshotEventEnvelope",
       "utterance": "#/$defs/UtteranceEventEnvelope"
     },
@@ -843,6 +940,9 @@
     },
     {
       "$ref": "#/$defs/DecisionEventEnvelope"
+    },
+    {
+      "$ref": "#/$defs/SessionFlagEventEnvelope"
     }
   ],
   "title": "TranscriptEvent"

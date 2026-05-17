@@ -21,15 +21,20 @@ Public surface:
   - `StateSnapshotEventPayload`   : P2 L3 snapshot payload (full SessionState).
   - `DecisionEventEnvelope`       : the `type="decision"` variant (P3 L10).
   - `DecisionEventPayload`        : P3 L10 decision payload (ModeratorDecision).
+  - `SessionFlagEventEnvelope`    : the `type="session_flag"` variant (P5 L7).
+  - `SessionFlagEventPayload`     : P5 L7 flag-bookmark payload.
   - `utterance_event`             : convenience constructor for utterance variant.
   - `state_snapshot_event`        : convenience constructor for snapshot variant.
   - `decision_event`              : convenience constructor for decision variant.
+  - `session_flag_event`          : convenience constructor for session_flag variant.
   - `channel_for`                 : canonical channel name builder.
 """
 
 from verbio_engine.realtime.events import (
     DecisionEventEnvelope,
     DecisionEventPayload,
+    SessionFlagEventEnvelope,
+    SessionFlagEventPayload,
     StateSnapshotEventEnvelope,
     StateSnapshotEventPayload,
     TranscriptEvent,
@@ -38,6 +43,7 @@ from verbio_engine.realtime.events import (
     UtteranceEventPayload,
     channel_for,
     decision_event,
+    session_flag_event,
     state_snapshot_event,
     utterance_event,
 )
@@ -53,6 +59,8 @@ __all__ = [
     "EventPublisher",
     "NullEventPublisher",
     "RedisEventPublisher",
+    "SessionFlagEventEnvelope",
+    "SessionFlagEventPayload",
     "StateSnapshotEventEnvelope",
     "StateSnapshotEventPayload",
     "TranscriptEvent",
@@ -61,6 +69,7 @@ __all__ = [
     "UtteranceEventPayload",
     "channel_for",
     "decision_event",
+    "session_flag_event",
     "state_snapshot_event",
     "utterance_event",
 ]
