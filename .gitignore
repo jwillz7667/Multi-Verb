@@ -147,6 +147,11 @@ apps/web/src/generated/prisma/
 # -----------------------------------------------------------------------------
 fixtures/audio/recorded/
 recordings/
+# Carve-out: the web app's `recordings` feature owns the R2 client + replay
+# code. The broad `recordings/` rule above is meant to catch any *runtime*
+# recording-output directory; this exception preserves source code.
+!apps/web/src/features/recordings/
+!apps/web/src/features/recordings/**
 *.wav.local
 *.mp3.local
 
