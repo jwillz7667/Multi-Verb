@@ -865,6 +865,62 @@ export async function* iterateAllDecisionsForSession(
 }
 
 /**
+ * Stream every state snapshot for a session into an async iterator.
+ *
+ * Snapshot export ships one JSON object per tick — at 2 Hz a 60-min
+ * session is 7,200 rows. Each `state` blob is a few KB so the full
+ * dump can exceed 30 MB pre-compression. Cursor pagination over
+ * `(tick_id, id)` keeps memory bounded to one chunk at a time and
+ * matches the `ix_state_snapshots_session_id_tick_id` index, so the
+ * walk runs cheaply even when the next chunk skips a high id range.
+ */
+export async function* iterateAllSnapshotsForSession(
+  sessionId: string,
+  chunkSize = 1_000,
+): AsyncGenerator<StateSnapshotRow[], void, void> {
+  let cursorTickId: bigint | undefined;
+  let cursorId: string | undefined;
+  let hasMore = true;
+  while (hasMore) {
+    const rows = await db.stateSnapshot.findMany({
+      where: {
+        sessionId,
+        ...(cursorTickId !== undefined && cursorId !== undefined
+          ? {
+              OR: [
+                { tickId: { gt: cursorTickId } },
+                { tickId: cursorTickId, id: { gt: cursorId } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ tickId: 'asc' }, { id: 'asc' }],
+      take: chunkSize,
+      select: {
+        id: true,
+        sessionId: true,
+        tickId: true,
+        ts: true,
+        state: true,
+      },
+    });
+    if (rows.length === 0) return;
+    yield rows.map((row) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      tickId: row.tickId,
+      ts: row.ts,
+      state: row.state,
+    }));
+    const last = rows[rows.length - 1];
+    if (last === undefined) return;
+    cursorTickId = last.tickId;
+    cursorId = last.id;
+    hasMore = rows.length === chunkSize;
+  }
+}
+
+/**
  * Fetch only decisions that actually went through the mouth — i.e.,
  * the moderator's spoken turns. The brief persists every tick (≈ 7200
  * rows per hour at 2 Hz) but the transcript export only wants the few

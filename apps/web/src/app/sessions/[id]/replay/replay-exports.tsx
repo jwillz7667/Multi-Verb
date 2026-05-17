@@ -5,8 +5,8 @@
  * leave the dashboard with the session in hand (brief §11.2):
  *
  *   - Transcript: .txt (human read) + .vtt (player overlay).
- *   - Decision log (.csv), state snapshots (.jsonl), flagged audio
- *     clips (.mp3) — placeholders pinned until L11–L13 land.
+ *   - Decision log (.csv), state snapshots (.jsonl).
+ *   - Flagged audio clips (.mp3) — placeholder pinned until L13 lands.
  *
  * Each enabled download is a plain anchor tag pointed at the export
  * route. Browsers handle Content-Disposition: attachment natively, so
@@ -53,9 +53,8 @@ export function ReplayExports({ sessionId }: Props): React.ReactElement {
     },
     {
       label: 'State snapshots (.jsonl)',
-      href: null,
+      href: `/api/sessions/${sessionId}/exports/snapshots`,
       testid: 'replay-export-snapshots',
-      pendingHint: 'P6 L12',
     },
     {
       label: 'Flagged clips (.mp3)',

@@ -5,9 +5,9 @@
  *   - the transcript .txt + .vtt links are real anchors pointed at the
  *     export route with the correct `format` query (browser downloads
  *     depend on this being a navigable URL with `download=""`),
- *   - the placeholder buttons for L11–L13 are visually present but
- *     disabled, with a "(P# L#)" hint so a researcher who scans the
- *     panel knows what's still pending,
+ *   - the placeholder button for L13 is visually present but disabled,
+ *     with a "(P# L#)" hint so a researcher who scans the panel knows
+ *     what's still pending,
  *   - the wrapping section keeps the `replay-exports-slot` testid the
  *     shell smoke test relies on.
  */
@@ -52,14 +52,18 @@ describe('<ReplayExports />', () => {
     expect(link).toHaveTextContent(/Decision log \(\.csv\)/);
   });
 
-  it('renders disabled placeholders for the L12–L13 exports with a phase hint', () => {
+  it('exposes the state-snapshots .jsonl download with the right href + download attr', () => {
     render(<ReplayExports sessionId="sess-abc" />);
 
-    const snapshots = screen.getByTestId('replay-export-snapshots');
-    expect(snapshots.tagName).toBe('BUTTON');
-    expect(snapshots).toBeDisabled();
-    expect(snapshots).toHaveTextContent(/State snapshots \(\.jsonl\)/);
-    expect(snapshots).toHaveTextContent(/P6 L12/);
+    const link = screen.getByTestId('replay-export-snapshots');
+    expect(link.tagName).toBe('A');
+    expect(link).toHaveAttribute('href', '/api/sessions/sess-abc/exports/snapshots');
+    expect(link).toHaveAttribute('download', '');
+    expect(link).toHaveTextContent(/State snapshots \(\.jsonl\)/);
+  });
+
+  it('renders the disabled placeholder for the L13 clips export with a phase hint', () => {
+    render(<ReplayExports sessionId="sess-abc" />);
 
     const clips = screen.getByTestId('replay-export-clips');
     expect(clips.tagName).toBe('BUTTON');

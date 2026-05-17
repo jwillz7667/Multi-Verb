@@ -15,3 +15,5 @@ export {
   formatDecisionLogRow,
 } from './decision-log';
 export type { DecisionLogColumn } from './decision-log';
+export { formatSnapshotsJsonl, snapshotToJsonl } from './state-snapshots';
+export type { StateSnapshotJsonl } from './state-snapshots';
