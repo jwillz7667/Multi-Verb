@@ -490,6 +490,45 @@ pnpm --filter @verbio/web prisma db pull
 pnpm --filter @verbio/web tsc --noEmit
 ```
 
+### 7.4 Pre-release load validation
+
+The concurrent-session load test models the brief's §14 Phase 7 target
+(ten rooms, five participants each, sixty minutes). It lives at
+`services/engine/tests/load/test_concurrent_sessions.py` and is excluded
+from the default sweep via `-m "not load"`.
+
+CI runs a 30-second smoke on every PR to catch obvious regressions:
+
+```bash
+cd services/engine
+uv run pytest -m load --no-cov
+```
+
+Before tagging a release, run the full 60-minute soak on a beefy host
+(local laptop is fine; the engine is single-process Python):
+
+```bash
+cd services/engine
+VERBIO_LOAD_DURATION_SEC=3600 uv run pytest -m load --no-cov -s
+```
+
+Pass criteria the test enforces:
+
+- Zero listener failures.
+- Tick-overrun rate < 2 % of total ticks.
+- Worst-session p95 per-tick latency < 100 ms.
+- RSS growth < 250 MB (10 sessions x ~25 MB headroom each).
+
+A clean run prints a one-line summary (`load summary: sessions=10, ...`)
+even on success — paste it into the release notes so the numbers are on
+record. A failure here blocks the release; investigate before retrying
+(common causes: event-log retention regression in `StateStore`,
+non-idempotent rule that allocates per tick, listener that holds a
+reference to the prior snapshot).
+
+Reproducibility: `VERBIO_LOAD_SEED` seeds the per-session RNG so a
+flaky failure can be re-run against the same load shape.
+
 ---
 
 ## 8. Compliance & PII handling (IRB-friendly)
@@ -533,6 +572,9 @@ Engine (run from `services/engine/`):
 uv run alembic upgrade head              # apply migrations
 uv run alembic history --verbose         # migration log
 uv run pytest --no-cov                   # full engine test sweep
+uv run pytest -m load --no-cov           # 30 s load smoke (CI variant)
+VERBIO_LOAD_DURATION_SEC=3600 \
+  uv run pytest -m load --no-cov -s      # 60-min pre-release soak
 uv run mypy --strict verbio_engine       # strict typecheck
 uv run ruff check verbio_engine tests    # lint
 uv run python -m verbio_engine.cli.schema_export  # regenerate shared types

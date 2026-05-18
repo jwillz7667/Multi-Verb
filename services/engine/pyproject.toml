@@ -196,10 +196,13 @@ addopts = [
   "--strict-config",
   "--strict-markers",
   "--tb=short",
+  "-m",
+  "not load",
 ]
 markers = [
   "integration: integration tests (require docker-compose dev stack)",
   "slow: tests > 1s",
+  "load: load tests (long-running; skipped from default sweep)",
 ]
 filterwarnings = [
   "error",
