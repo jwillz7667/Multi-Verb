@@ -25,7 +25,7 @@ dependencies = [
   "alembic>=1.14.0,<2",
   "sqlalchemy[asyncio]>=2.0.36,<3",
   "psycopg2-binary>=2.9.10,<3",
-  "asyncpg>=0.30.0,<0.31",
+  "asyncpg>=0.30.0,<0.32",
   "redis>=5.2.0,<6",
   # LiveKit Agents worker (Phase 1: room join + audio subscribe).
   # `livekit` (the rtc SDK) is pulled in transitively; STT/TTS plugins
