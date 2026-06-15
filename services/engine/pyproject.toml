@@ -17,7 +17,7 @@ keywords = ["livekit", "qualitative-research", "moderator", "fastapi"]
 # — env.py normalises the URL into a psycopg2-driver form at migration
 # time, regardless of how the runtime configures the async engine.
 dependencies = [
-  "fastapi>=0.115.0,<0.116",
+  "fastapi>=0.115.0,<0.138",
   "uvicorn[standard]>=0.32.0,<0.35",
   "pydantic>=2.10.0,<3",
   "pydantic-settings>=2.6.0,<3",
